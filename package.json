@@ -1,0 +1,45 @@
+{
+  "name": "backend-scaffold",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-ready Node.js and Express backend scaffold",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon --exec \"node --env-file-if-exists=.env.development\" src/server.js",
+    "start": "node --env-file-if-exists=.env.production src/server.js",
+    "seed:admin": "node --env-file-if-exists=.env.production src/scripts/seed-admin.js",
+    "test": "node --test test/*.test.js",
+    "test:smoke": "node test/smoke-flow.js",
+    "test:production": "node test/production-flow.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check"
+  },
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.2.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.7.4",
+    "morgan": "^1.11.0",
+    "nodemailer": "^9.0.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.7.0",
+    "nodemon": "^3.1.14",
+    "prettier": "^3.9.5"
+  }
+}
