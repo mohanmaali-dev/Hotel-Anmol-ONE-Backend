@@ -77,7 +77,7 @@ let server;
 try {
   await runNode('src/scripts/seed-admin.js');
   await runNode('src/scripts/seed-admin.js');
-  server = spawn(process.execPath, ['src/server.js'], {
+  server = spawn(process.execPath, ['test/vercel-entry.js'], {
     cwd: process.cwd(),
     env: productionEnv,
     stdio: 'inherit',

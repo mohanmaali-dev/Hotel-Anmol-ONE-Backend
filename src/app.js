@@ -6,7 +6,8 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 
 import { corsOptions } from './config/cors.js';
-import { env } from './config/env.js';
+import { env, validateEnvironment } from './config/env.js';
+import { ensureDatabaseConnection } from './middlewares/database.middleware.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 import { notFoundHandler } from './middlewares/not-found.middleware.js';
 import { globalRateLimiter } from './middlewares/rate-limit.middleware.js';
@@ -24,6 +25,8 @@ import { settingRouter } from './routes/setting.routes.js';
 import { stockRouter } from './routes/stock.routes.js';
 import { supplierRouter } from './routes/supplier.routes.js';
 
+validateEnvironment();
+
 const app = express();
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
@@ -38,6 +41,7 @@ if (env.nodeEnv !== 'test') {
   app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
 }
 
+app.use('/api', ensureDatabaseConnection);
 app.use('/api/health', healthRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/users', userRouter);
