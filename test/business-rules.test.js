@@ -5,6 +5,7 @@ import {
   calculateRequiredIngredients,
   combineRequiredIngredients,
 } from '../src/utils/menu-stock.js';
+import { buildDateFilter } from '../src/utils/date-range.js';
 import { calculateOrderTotals } from '../src/utils/order-calculations.js';
 import { calculatePayment } from '../src/utils/payment-calculations.js';
 import { calculatePurchaseTotals } from '../src/utils/purchase-calculations.js';
@@ -41,6 +42,49 @@ test('order total rejects a negative final amount', () => {
   );
 });
 
+test('money calculations are rounded to two decimal places', () => {
+  const totals = calculateOrderTotals(
+    [{ menuItemId: objectId, itemName: 'Tea', quantity: 3, rate: 0.1 }],
+    0.1,
+    0.2,
+  );
+  assert.equal(totals.items[0].amount, 0.3);
+  assert.equal(totals.subtotal, 0.3);
+  assert.equal(totals.finalAmount, 0.4);
+  assert.equal(calculatePayment(0.4, 0.1, 'Cash').dueAmount, 0.3);
+});
+
+test('date filters use the restaurant timezone', () => {
+  const range = buildDateFilter('2026-08-25', '2026-08-25');
+  assert.equal(range.$gte.toISOString(), '2026-08-24T18:30:00.000Z');
+  assert.equal(range.$lt.toISOString(), '2026-08-25T18:30:00.000Z');
+});
+
+test('order items keep the recipe captured when the order is created', () => {
+  const totals = calculateOrderTotals([
+    {
+      menuItemId: objectId,
+      itemName: 'Burger',
+      quantity: 1,
+      rate: 100,
+      servingSize: '1 Plate',
+      recipeCaptured: true,
+      trackStock: true,
+      ingredients: [
+        {
+          stockItemId: objectId,
+          stockItemName: 'Bun',
+          quantityUsed: 1,
+          unit: 'Piece',
+        },
+      ],
+    },
+  ]);
+  assert.equal(totals.items[0].recipeCaptured, true);
+  assert.equal(totals.items[0].servingSize, '1 Plate');
+  assert.equal(totals.items[0].ingredients[0].stockItemName, 'Bun');
+});
+
 test('purchase and payment totals remain consistent', () => {
   const totals = calculatePurchaseTotals(
     [{ stockItemId: objectId, itemName: 'Rice', quantity: 5, unit: 'kg', purchasePrice: 80 }],
@@ -55,7 +99,20 @@ test('purchase and payment totals remain consistent', () => {
     paymentType: 'UPI',
     paymentStatus: 'Partial',
   });
+  assert.equal(calculatePayment(390, 0, 'Cash').paymentType, null);
   assert.throws(() => calculatePayment(390, 391, 'Cash'), /cannot exceed/);
+  assert.throws(() => calculatePayment(390, 10, 'Cheque'), /must be Cash, UPI, or Card/);
+});
+
+test('a purchase cannot contain the same stock item twice', () => {
+  assert.throws(
+    () =>
+      calculatePurchaseTotals([
+        { stockItemId: objectId, itemName: 'Rice', quantity: 1, unit: 'kg', purchasePrice: 80 },
+        { stockItemId: objectId, itemName: 'Rice', quantity: 2, unit: 'kg', purchasePrice: 82 },
+      ]),
+    /cannot be added more than once/,
+  );
 });
 
 test('stock status and quantities enforce inventory rules', () => {
@@ -63,6 +120,7 @@ test('stock status and quantities enforce inventory rules', () => {
   assert.equal(getStockStatus(5, 5), 'Low Stock');
   assert.equal(getStockStatus(6, 5), 'In Stock');
   assert.throws(() => toPositiveQuantity(0), /greater than 0/);
+  assert.equal(toPositiveQuantity(0.1 + 0.2), 0.3);
 });
 
 test('recipe requirements combine duplicate ingredients', () => {

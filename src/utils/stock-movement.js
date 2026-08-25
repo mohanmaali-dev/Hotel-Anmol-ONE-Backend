@@ -4,6 +4,7 @@ import { StockHistory } from '../models/stock-history.model.js';
 import { StockItem } from '../models/stock-item.model.js';
 import {
   getStockStatus,
+  roundStockQuantity,
   toNonNegativeStockNumber,
   toPositiveQuantity,
 } from './stock-calculations.js';
@@ -33,8 +34,8 @@ const statusExpression = (quantityExpression) => ({
 const rollbackMovement = async ({ itemBefore, type, quantity, historyId }) => {
   const quantityExpression =
     type === 'IN'
-      ? { $subtract: ['$currentQuantity', quantity] }
-      : { $add: ['$currentQuantity', quantity] };
+      ? { $round: [{ $subtract: ['$currentQuantity', quantity] }, 6] }
+      : { $round: [{ $add: ['$currentQuantity', quantity] }, 6] };
   const fields = {
     currentQuantity: quantityExpression,
     status: statusExpression(quantityExpression),
@@ -84,8 +85,8 @@ export const applyStockMovement = async ({
 
   const quantityExpression =
     type === 'IN'
-      ? { $add: ['$currentQuantity', quantity] }
-      : { $subtract: ['$currentQuantity', quantity] };
+      ? { $round: [{ $add: ['$currentQuantity', quantity] }, 6] }
+      : { $round: [{ $subtract: ['$currentQuantity', quantity] }, 6] };
   const fields = {
     currentQuantity: quantityExpression,
     status: statusExpression(quantityExpression),
@@ -111,7 +112,9 @@ export const applyStockMovement = async ({
   }
 
   const previousQuantity =
-    type === 'IN' ? item.currentQuantity - quantity : item.currentQuantity + quantity;
+    type === 'IN'
+      ? roundStockQuantity(item.currentQuantity - quantity)
+      : roundStockQuantity(item.currentQuantity + quantity);
   let history;
   try {
     history = await StockHistory.create({

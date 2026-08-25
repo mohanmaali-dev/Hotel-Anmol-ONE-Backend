@@ -14,6 +14,7 @@ import { globalRateLimiter } from './middlewares/rate-limit.middleware.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { userRouter } from './modules/users/user.routes.js';
 import { billRouter } from './routes/bill.routes.js';
+import { dependencyRouter } from './routes/dependency.routes.js';
 import { expenseRouter } from './routes/expense.routes.js';
 import { healthRouter } from './routes/health.routes.js';
 import { menuRouter } from './routes/menu.routes.js';
@@ -44,6 +45,7 @@ if (env.nodeEnv !== 'test') {
 app.use('/api', ensureDatabaseConnection);
 app.use('/api/health', healthRouter);
 app.use('/api/auth', authRouter);
+app.use('/api/dependencies', dependencyRouter);
 app.use('/api/users', userRouter);
 app.use('/api/expenses', expenseRouter);
 app.use('/api/menu', menuRouter);

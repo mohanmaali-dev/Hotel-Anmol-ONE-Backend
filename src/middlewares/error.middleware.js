@@ -36,5 +36,6 @@ export const errorHandler = (error, request, response, _next) => {
     message,
     errors,
     items: error.items,
+    dependencies: error.dependencies,
   });
 };

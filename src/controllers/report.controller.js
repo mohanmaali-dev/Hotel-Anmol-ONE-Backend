@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 
+import { env } from '../config/env.js';
 import { Expense } from '../models/expense.model.js';
 import { Order } from '../models/order.model.js';
 import { Purchase } from '../models/purchase.model.js';
@@ -55,13 +56,13 @@ export const getSalesReport = async (request, response) => {
               paidAmount: { $sum: '$paidAmount' },
               dueAmount: { $sum: '$dueAmount' },
               cashSales: {
-                $sum: { $cond: [{ $eq: ['$paymentType', 'Cash'] }, '$finalAmount', 0] },
+                $sum: { $cond: [{ $eq: ['$paymentType', 'Cash'] }, '$paidAmount', 0] },
               },
               upiSales: {
-                $sum: { $cond: [{ $eq: ['$paymentType', 'UPI'] }, '$finalAmount', 0] },
+                $sum: { $cond: [{ $eq: ['$paymentType', 'UPI'] }, '$paidAmount', 0] },
               },
               cardSales: {
-                $sum: { $cond: [{ $eq: ['$paymentType', 'Card'] }, '$finalAmount', 0] },
+                $sum: { $cond: [{ $eq: ['$paymentType', 'Card'] }, '$paidAmount', 0] },
               },
               totalOrders: { $sum: 1 },
             },
@@ -71,7 +72,13 @@ export const getSalesReport = async (request, response) => {
         daily: [
           {
             $group: {
-              _id: { $dateToString: { format: '%Y-%m-%d', date: '$date', timezone: 'UTC' } },
+              _id: {
+                $dateToString: {
+                  format: '%Y-%m-%d',
+                  date: '$date',
+                  timezone: env.appTimezone,
+                },
+              },
               totalSales: { $sum: '$finalAmount' },
               paidAmount: { $sum: '$paidAmount' },
               dueAmount: { $sum: '$dueAmount' },
@@ -130,9 +137,11 @@ export const getPurchaseReport = async (request, response) => {
     ]),
     Purchase.aggregate([
       { $match: match },
+      { $sort: { purchaseDate: 1, createdAt: 1 } },
       {
         $group: {
-          _id: { supplierId: '$supplierId', supplierName: '$supplierName' },
+          _id: '$supplierId',
+          supplierName: { $last: '$supplierName' },
           totalPurchaseAmount: { $sum: '$finalAmount' },
           paidAmount: { $sum: '$paidAmount' },
           dueAmount: { $sum: '$dueAmount' },
@@ -142,8 +151,8 @@ export const getPurchaseReport = async (request, response) => {
       {
         $project: {
           _id: 0,
-          supplierId: '$_id.supplierId',
-          supplierName: '$_id.supplierName',
+          supplierId: '$_id',
+          supplierName: 1,
           totalPurchaseAmount: 1,
           paidAmount: 1,
           dueAmount: 1,

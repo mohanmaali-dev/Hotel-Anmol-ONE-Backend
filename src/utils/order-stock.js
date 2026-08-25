@@ -22,10 +22,11 @@ const createInsufficientStockError = (availability) => {
 };
 
 export const getOrderStockRequirements = async (order) => {
-  const menuItemIds = [...new Set(order.items.map((item) => String(item.menuItemId)))];
+  const legacyItems = order.items.filter((item) => item.recipeCaptured !== true);
+  const menuItemIds = [...new Set(legacyItems.map((item) => String(item.menuItemId)))];
   const menuItems = await MenuItem.find({ _id: { $in: menuItemIds } }).lean();
   const menuById = new Map(menuItems.map((item) => [String(item._id), item]));
-  const missingItems = order.items
+  const missingItems = legacyItems
     .filter((item) => !menuById.has(String(item.menuItemId)))
     .map((item) => item.itemName);
 
@@ -38,7 +39,10 @@ export const getOrderStockRequirements = async (order) => {
 
   return combineRequiredIngredients(
     order.items.map((item) => ({
-      menuItem: menuById.get(String(item.menuItemId)),
+      menuItem:
+        item.recipeCaptured === true
+          ? { trackStock: item.trackStock, ingredients: item.ingredients }
+          : menuById.get(String(item.menuItemId)),
       quantity: item.quantity,
     })),
   );

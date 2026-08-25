@@ -23,12 +23,13 @@ export const sendSuccess = (
 
 export const sendError = (
   response,
-  { statusCode = 500, message = 'Internal server error', errors, items },
+  { statusCode = 500, message = 'Internal server error', errors, items, dependencies },
 ) => {
   const body = { success: false, message };
 
   if (errors !== undefined) body.errors = errors;
   if (items !== undefined) body.items = items;
+  if (dependencies !== undefined) body.dependencies = dependencies;
 
   return response.status(statusCode).json(body);
 };

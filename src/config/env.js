@@ -26,6 +26,7 @@ export const env = {
   jsonBodyLimit: process.env.JSON_BODY_LIMIT || '10kb',
   rateLimitWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 900000,
   rateLimitMax: Number(process.env.RATE_LIMIT_MAX) || 100,
+  appTimezone: process.env.APP_TIMEZONE || 'Asia/Kolkata',
   emailHost: process.env.EMAIL_HOST,
   emailEnabled: process.env.EMAIL_ENABLED === 'true',
   requireEmailVerification: process.env.REQUIRE_EMAIL_VERIFICATION === 'true',
@@ -53,6 +54,11 @@ export const validateEnvironment = () => {
   }
   if (env.nodeEnv === 'production' && env.jwtAccessSecret.length < 32) {
     throw new Error('JWT_SECRET must contain at least 32 characters in production');
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: env.appTimezone }).format();
+  } catch {
+    throw new Error(`Invalid APP_TIMEZONE: ${env.appTimezone}`);
   }
   env.corsOrigins.forEach((origin) => {
     let parsed;

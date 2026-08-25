@@ -4,6 +4,9 @@ import mongoose from 'mongoose';
 
 import { Expense } from '../models/expense.model.js';
 import { sendSuccess } from '../utils/api-response.js';
+import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
+import { buildDateFilter, getCurrentDayRange, getCurrentMonthRange } from '../utils/date-range.js';
+import { roundMoney } from '../utils/money.js';
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -27,19 +30,12 @@ const getPagination = (query) => {
   return { page, limit };
 };
 
-const buildDateFilter = (fromDate, toDate) => {
-  const date = {};
-  if (fromDate) date.$gte = new Date(`${fromDate}T00:00:00.000Z`);
-  if (toDate) date.$lte = new Date(`${toDate}T23:59:59.999Z`);
-  return Object.keys(date).length ? date : undefined;
-};
-
 const getPositiveAmount = (value) => {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0) {
     throw createError('Amount must be greater than 0', 400);
   }
-  return amount;
+  return roundMoney(amount);
 };
 
 const findExpense = async (id) => {
@@ -113,28 +109,25 @@ export const updateExpense = async (request, response) => {
 
 export const deleteExpense = async (request, response) => {
   const expense = await findExpense(request.params.id);
+  await assertNoDeletionDependencies('expense', expense._id);
   await expense.deleteOne();
   return sendSuccess(response, { message: 'Expense deleted successfully', data: expense });
 };
 
 export const getExpenseSummary = async (_request, response) => {
   const now = new Date();
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  const endOfToday = new Date(now);
-  endOfToday.setHours(23, 59, 59, 999);
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const today = getCurrentDayRange(now);
+  const month = getCurrentMonthRange(now);
 
   const [summary] = await Expense.aggregate([
     {
       $facet: {
         today: [
-          { $match: { date: { $gte: startOfToday, $lte: endOfToday } } },
+          { $match: { date: { $gte: today.start, $lt: today.end } } },
           { $group: { _id: null, amount: { $sum: '$amount' } } },
         ],
         month: [
-          { $match: { date: { $gte: startOfMonth, $lt: startOfNextMonth } } },
+          { $match: { date: { $gte: month.start, $lt: month.end } } },
           { $group: { _id: null, amount: { $sum: '$amount' } } },
         ],
         total: [{ $group: { _id: null, amount: { $sum: '$amount' } } }],
