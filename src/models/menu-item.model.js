@@ -22,6 +22,9 @@ const ingredientSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    stockQuantityUsed: { type: Number, min: 0.000001, default: function defaultStockQuantityUsed() { return this.quantityUsed; } },
+    stockUnit: { type: String, trim: true, default: function defaultStockUnit() { return this.unit; } },
+    conversionFactor: { type: Number, required: true, min: 0.000001, default: 1 },
   },
   { _id: false },
 );

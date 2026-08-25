@@ -72,6 +72,9 @@ const getServerPricedItems = async (items) => {
         stockItemName: ingredient.stockItemName,
         quantityUsed: ingredient.quantityUsed,
         unit: ingredient.unit,
+        stockQuantityUsed: ingredient.stockQuantityUsed || ingredient.quantityUsed,
+        stockUnit: ingredient.stockUnit || ingredient.unit,
+        conversionFactor: ingredient.conversionFactor || 1,
       })),
     };
   });

@@ -6,6 +6,9 @@ const orderIngredientSchema = new mongoose.Schema(
     stockItemName: { type: String, required: true, trim: true },
     quantityUsed: { type: Number, required: true, min: 0.001 },
     unit: { type: String, required: true, trim: true },
+    stockQuantityUsed: { type: Number, min: 0.000001, default: function defaultStockQuantityUsed() { return this.quantityUsed; } },
+    stockUnit: { type: String, trim: true, default: function defaultStockUnit() { return this.unit; } },
+    conversionFactor: { type: Number, required: true, min: 0.000001, default: 1 },
   },
   { _id: false },
 );

@@ -10,6 +10,7 @@ import { calculateOrderTotals } from '../src/utils/order-calculations.js';
 import { calculatePayment } from '../src/utils/payment-calculations.js';
 import { calculatePurchaseTotals } from '../src/utils/purchase-calculations.js';
 import { getStockStatus, toPositiveQuantity } from '../src/utils/stock-calculations.js';
+import { convertIngredientToStockUnit } from '../src/utils/unit-conversion.js';
 
 const objectId = '507f1f77bcf86cd799439011';
 
@@ -144,4 +145,35 @@ test('recipe requirements combine duplicate ingredients', () => {
     { menuItem: sandwich, quantity: 1 },
   ]);
   assert.equal(combined.find((item) => item.stockItemId === 'sauce').requiredQuantity, 50);
+});
+
+test('recipe quantities convert to the stock item unit', () => {
+  const recipe = convertIngredientToStockUnit({
+    quantity: 250,
+    ingredientUnit: 'gram',
+    stockUnit: 'kg',
+  });
+  assert.equal(recipe.stockQuantityUsed, 0.25);
+  assert.throws(
+    () => convertIngredientToStockUnit({ quantity: 1, ingredientUnit: 'ml', stockUnit: 'kg' }),
+    /cannot be used/,
+  );
+});
+
+test('order recipe deduction uses the converted stock quantity snapshot', () => {
+  const menuItem = {
+    trackStock: true,
+    ingredients: [{
+      stockItemId: 'paneer',
+      stockItemName: 'Paneer',
+      quantityUsed: 250,
+      unit: 'gram',
+      stockQuantityUsed: 0.25,
+      stockUnit: 'kg',
+      conversionFactor: 0.001,
+    }],
+  };
+  const requirement = calculateRequiredIngredients(menuItem, 3)[0];
+  assert.equal(requirement.requiredQuantity, 0.75);
+  assert.equal(requirement.unit, 'kg');
 });

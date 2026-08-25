@@ -59,6 +59,9 @@ export const calculateOrderTotals = (items, discountValue = 0, additionalCharges
             stockItemName: ingredient.stockItemName,
             quantityUsed: ingredient.quantityUsed,
             unit: ingredient.unit,
+            stockQuantityUsed: ingredient.stockQuantityUsed || ingredient.quantityUsed,
+            stockUnit: ingredient.stockUnit || ingredient.unit,
+            conversionFactor: ingredient.conversionFactor || 1,
           }))
         : [];
     }

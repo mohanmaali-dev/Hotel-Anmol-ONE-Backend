@@ -8,9 +8,12 @@ export const calculateRequiredIngredients = (menuItem, orderedQuantity = 1) => {
   return menuItem.ingredients.map((ingredient) => ({
     stockItemId: ingredient.stockItemId,
     stockItemName: ingredient.stockItemName,
-    unit: ingredient.unit,
-    quantityPerItem: ingredient.quantityUsed,
-    requiredQuantity: roundStockQuantity(ingredient.quantityUsed * quantity),
+    unit: ingredient.stockUnit || ingredient.unit,
+    recipeUnit: ingredient.unit,
+    quantityPerItem: ingredient.stockQuantityUsed || ingredient.quantityUsed,
+    requiredQuantity: roundStockQuantity(
+      (ingredient.stockQuantityUsed || ingredient.quantityUsed) * quantity,
+    ),
   }));
 };
 
