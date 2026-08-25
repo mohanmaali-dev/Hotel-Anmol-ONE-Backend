@@ -3,6 +3,12 @@ import test from 'node:test';
 
 import { comparePassword, hashPassword } from '../src/utils/password.js';
 import {
+  createAccessToken,
+  createRefreshToken,
+  verifyAccessToken,
+  verifyRefreshToken,
+} from '../src/utils/jwt.js';
+import {
   getDefaultPermissions,
   hasPermission,
   normalizePermissions,
@@ -14,6 +20,16 @@ test('passwords are hashed and can be verified', async () => {
   assert.notEqual(hash, password);
   assert.equal(await comparePassword(password, hash), true);
   assert.equal(await comparePassword('wrong-password', hash), false);
+});
+
+test('access and refresh tokens use valid independent session lifetimes', () => {
+  const userId = '507f1f77bcf86cd799439011';
+  const access = verifyAccessToken(createAccessToken(userId));
+  const refresh = verifyRefreshToken(createRefreshToken(userId));
+  assert.equal(access.userId, userId);
+  assert.equal(refresh.userId, userId);
+  assert.ok(refresh.exp > access.exp);
+  assert.throws(() => verifyRefreshToken(createAccessToken(userId)));
 });
 
 test('Admin has full access while Waiter stays restricted', () => {

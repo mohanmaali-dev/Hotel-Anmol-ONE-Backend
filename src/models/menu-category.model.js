@@ -8,6 +8,7 @@ const menuCategorySchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
+    nameKey: { type: String, unique: true, sparse: true, select: false },
     description: {
       type: String,
       trim: true,
@@ -22,5 +23,9 @@ const menuCategorySchema = new mongoose.Schema(
   },
   { timestamps: true, versionKey: false },
 );
+
+menuCategorySchema.pre('validate', function setNameKey() {
+  this.nameKey = this.name?.trim().toLocaleLowerCase('en-IN');
+});
 
 export const MenuCategory = mongoose.model('MenuCategory', menuCategorySchema);

@@ -163,15 +163,17 @@ test('recipe quantities convert to the stock item unit', () => {
 test('order recipe deduction uses the converted stock quantity snapshot', () => {
   const menuItem = {
     trackStock: true,
-    ingredients: [{
-      stockItemId: 'paneer',
-      stockItemName: 'Paneer',
-      quantityUsed: 250,
-      unit: 'gram',
-      stockQuantityUsed: 0.25,
-      stockUnit: 'kg',
-      conversionFactor: 0.001,
-    }],
+    ingredients: [
+      {
+        stockItemId: 'paneer',
+        stockItemName: 'Paneer',
+        quantityUsed: 250,
+        unit: 'gram',
+        stockQuantityUsed: 0.25,
+        stockUnit: 'kg',
+        conversionFactor: 0.001,
+      },
+    ],
   };
   const requirement = calculateRequiredIngredients(menuItem, 3)[0];
   assert.equal(requirement.requiredQuantity, 0.75);

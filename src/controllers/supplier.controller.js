@@ -73,9 +73,39 @@ export const getSuppliers = async (request, response) => {
       .limit(limit),
     Supplier.countDocuments(filters),
   ]);
+  const totals = suppliers.length
+    ? await Purchase.aggregate([
+        {
+          $match: {
+            supplierId: { $in: suppliers.map((supplier) => supplier._id) },
+            purchaseStatus: { $ne: 'Cancelled' },
+          },
+        },
+        {
+          $group: {
+            _id: '$supplierId',
+            totalPurchases: { $sum: 1 },
+            totalPurchaseAmount: { $sum: '$finalAmount' },
+            totalPaid: { $sum: '$paidAmount' },
+            totalDue: { $sum: '$dueAmount' },
+            lastPurchaseDate: { $max: '$purchaseDate' },
+          },
+        },
+      ])
+    : [];
+  const totalsBySupplier = new Map(totals.map((row) => [String(row._id), row]));
   return sendSuccess(response, {
     message: 'Suppliers fetched successfully',
-    data: suppliers.map(serializeSupplier),
+    data: suppliers.map((supplier) => ({
+      ...serializeSupplier(supplier),
+      purchaseSummary: totalsBySupplier.get(String(supplier._id)) || {
+        totalPurchases: 0,
+        totalPurchaseAmount: 0,
+        totalPaid: 0,
+        totalDue: 0,
+        lastPurchaseDate: null,
+      },
+    })),
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
 };

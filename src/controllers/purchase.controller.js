@@ -9,8 +9,10 @@ import { sendSuccess } from '../utils/api-response.js';
 import { buildDateFilter } from '../utils/date-range.js';
 import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
 import { calculatePayment } from '../utils/payment-calculations.js';
+import { getPaymentHistory, recordPaymentChange } from '../utils/payment-history.js';
 import { calculatePurchaseTotals } from '../utils/purchase-calculations.js';
 import { applyStockMovement, rollbackAppliedMovement } from '../utils/stock-movement.js';
+import { runInTransaction } from '../utils/transaction.js';
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -54,16 +56,59 @@ const findSupplier = async (supplierId, allowInactive = false) => {
   return supplier;
 };
 
-const savePurchaseSafely = async (purchase, conditions = {}) => {
+const savePurchaseSafely = async (purchase, conditions = {}, session) => {
   purchase.$where = { updatedAt: purchase.updatedAt, ...conditions };
   try {
-    await purchase.save();
+    await purchase.save({ session });
   } catch (error) {
     if (error.name === 'DocumentNotFoundError') {
       throw createError('Purchase changed while it was being updated. Please try again', 409);
     }
     throw error;
   }
+  return purchase;
+};
+
+const executePurchasePaymentUpdate = async (id, body, userId, session) => {
+  const query = mongoose.isValidObjectId(id)
+    ? { _id: id }
+    : { purchaseNo: id.trim().toUpperCase() };
+  const purchase = await Purchase.findOne(query).session(session || null);
+  if (!purchase) throw createError('Purchase not found', 404);
+  if (purchase.purchaseStatus === 'Cancelled') {
+    throw createError('Payment cannot be updated for a cancelled purchase', 400);
+  }
+
+  const payment = calculatePayment(
+    purchase.finalAmount,
+    body.paidAmount,
+    body.paymentType || purchase.paymentType,
+  );
+  if (payment.paidAmount < purchase.paidAmount && !String(body.reason || '').trim()) {
+    throw createError('Please enter a reason for reducing the paid amount', 400);
+  }
+  const previousPayment = {
+    paidAmount: purchase.paidAmount,
+    paymentType: purchase.paymentType,
+    paymentStatus: purchase.paymentStatus,
+  };
+
+  if (purchase.paidAmount > 0 || payment.paidAmount > 0) purchase.paymentRecorded = true;
+  purchase.set(payment);
+  await savePurchaseSafely(
+    purchase,
+    { purchaseStatus: { $ne: 'Cancelled' }, stockProcessing: { $ne: true } },
+    session,
+  );
+  await recordPaymentChange({
+    recordType: 'Purchase',
+    recordId: purchase._id,
+    previous: previousPayment,
+    current: payment,
+    changedBy: userId,
+    reason: body.reason,
+    session,
+  });
   return purchase;
 };
 
@@ -80,6 +125,9 @@ const getValidatedPurchaseItems = async (items) => {
   return items.map((item, index) => {
     const stockItem = stockById.get(String(item.stockItemId));
     if (!stockItem) throw createError(`Item ${index + 1}: stock item not found`, 404);
+    if (!stockItem.isActive) {
+      throw createError(`Item ${index + 1}: ${stockItem.itemName} is inactive`, 400);
+    }
     return {
       stockItemId: stockItem._id,
       itemName: stockItem.itemName,
@@ -90,9 +138,11 @@ const getValidatedPurchaseItems = async (items) => {
   });
 };
 
-const receivePurchaseIntoStock = async (purchase, user) => {
+const executePurchaseReceipt = async (purchase, user, session) => {
   const stockItemIds = [...new Set(purchase.items.map((item) => String(item.stockItemId)))];
-  const existingItems = await StockItem.countDocuments({ _id: { $in: stockItemIds } });
+  const existingItems = await StockItem.countDocuments({ _id: { $in: stockItemIds } }).session(
+    session || null,
+  );
   if (existingItems !== stockItemIds.length) {
     throw createError('Every purchase item must reference an existing stock item', 400);
   }
@@ -114,11 +164,11 @@ const receivePurchaseIntoStock = async (purchase, user) => {
         stockProcessing: true,
       },
     },
-    { returnDocument: 'after', runValidators: true },
+    { returnDocument: 'after', runValidators: true, session },
   );
 
   if (!claimedPurchase) {
-    const latestPurchase = await Purchase.findById(purchase._id);
+    const latestPurchase = await Purchase.findById(purchase._id).session(session || null);
     if (latestPurchase?.stockUpdated) return latestPurchase;
     throw createError('Purchase stock update is already in progress', 409);
   }
@@ -138,6 +188,7 @@ const receivePurchaseIntoStock = async (purchase, user) => {
         date: claimedPurchase.receivedAt,
         note: `Stock received from ${claimedPurchase.purchaseNo}.`,
         user,
+        session,
       });
       appliedMovements.push(movement);
     }
@@ -146,9 +197,10 @@ const receivePurchaseIntoStock = async (purchase, user) => {
     claimedPurchase.stockUpdatePending = false;
     claimedPurchase.stockProcessing = false;
     claimedPurchase.stockUpdatedAt = new Date();
-    await claimedPurchase.save();
+    await claimedPurchase.save({ session });
     return claimedPurchase;
   } catch (error) {
+    if (session) throw error;
     const rollbackResults = await Promise.allSettled(
       appliedMovements.reverse().map((movement) => rollbackAppliedMovement(movement)),
     );
@@ -165,6 +217,12 @@ const receivePurchaseIntoStock = async (purchase, user) => {
     throw error;
   }
 };
+
+const receivePurchaseIntoStock = async (purchase, user) =>
+  runInTransaction(
+    (session) => executePurchaseReceipt(purchase, user, session),
+    () => executePurchaseReceipt(purchase, user),
+  );
 
 export const getPurchases = async (request, response) => {
   const { page, limit } = getPagination(request.query);
@@ -210,7 +268,11 @@ export const getPurchases = async (request, response) => {
 
 export const getPurchase = async (request, response) => {
   const purchase = await findPurchase(request.params.id);
-  return sendSuccess(response, { message: 'Purchase fetched successfully', data: purchase });
+  const paymentHistory = await getPaymentHistory('Purchase', purchase._id);
+  return sendSuccess(response, {
+    message: 'Purchase fetched successfully',
+    data: { ...purchase.toObject(), paymentHistory },
+  });
 };
 
 export const createPurchase = async (request, response) => {
@@ -279,6 +341,11 @@ export const updatePurchase = async (request, response) => {
     purchase.paidAmount,
     request.body.paymentType ?? purchase.paymentType,
   );
+  const previousPayment = {
+    paidAmount: purchase.paidAmount,
+    paymentType: purchase.paymentType,
+    paymentStatus: purchase.paymentStatus,
+  };
 
   if (supplier) {
     purchase.supplierId = supplier._id;
@@ -294,6 +361,14 @@ export const updatePurchase = async (request, response) => {
     purchaseStatus: purchase.purchaseStatus,
     stockUpdated: { $ne: true },
     stockProcessing: { $ne: true },
+  });
+  await recordPaymentChange({
+    recordType: 'Purchase',
+    recordId: purchase._id,
+    previous: previousPayment,
+    current: payment,
+    changedBy: request.userId,
+    reason: request.body.reason,
   });
 
   return sendSuccess(response, {
@@ -368,21 +443,9 @@ export const updatePurchasePayment = async (request, response) => {
     throw createError('Paid amount is required', 400);
   }
 
-  const purchase = await findPurchase(request.params.id);
-  if (purchase.purchaseStatus === 'Cancelled') {
-    throw createError('Payment cannot be updated for a cancelled purchase', 400);
-  }
-  const payment = calculatePayment(
-    purchase.finalAmount,
-    request.body.paidAmount,
-    request.body.paymentType || purchase.paymentType,
-  );
-  if (purchase.paidAmount > 0 || payment.paidAmount > 0) purchase.paymentRecorded = true;
-  purchase.set(payment);
-  await savePurchaseSafely(purchase, {
-    purchaseStatus: { $ne: 'Cancelled' },
-    stockProcessing: { $ne: true },
-  });
+  const update = (session) =>
+    executePurchasePaymentUpdate(request.params.id, request.body, request.userId, session);
+  const purchase = await runInTransaction(update, () => update());
 
   return sendSuccess(response, {
     message: 'Purchase payment updated successfully',

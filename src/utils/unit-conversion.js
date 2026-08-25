@@ -21,15 +21,32 @@ const units = {
 };
 
 const aliases = {
-  g: 'gram', grams: 'gram', kilogram: 'kg', kilograms: 'kg',
-  millilitre: 'ml', millilitres: 'ml', milliliter: 'ml', milliliters: 'ml',
-  l: 'litre', liter: 'litre', liters: 'litre', litres: 'litre',
-  pieces: 'piece', pcs: 'piece', slices: 'slice', bottles: 'bottle',
-  packets: 'packet', boxes: 'box', crates: 'crate', bags: 'bag',
+  g: 'gram',
+  grams: 'gram',
+  kilogram: 'kg',
+  kilograms: 'kg',
+  millilitre: 'ml',
+  millilitres: 'ml',
+  milliliter: 'ml',
+  milliliters: 'ml',
+  l: 'litre',
+  liter: 'litre',
+  liters: 'litre',
+  litres: 'litre',
+  pieces: 'piece',
+  pcs: 'piece',
+  slices: 'slice',
+  bottles: 'bottle',
+  packets: 'packet',
+  boxes: 'box',
+  crates: 'crate',
+  bags: 'bag',
 };
 
 export const normalizeUnit = (value, fieldName = 'Unit') => {
-  const raw = String(value || '').trim().toLowerCase();
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase();
   const unit = aliases[raw] || raw;
   if (!units[unit]) throw createError(`${fieldName} is not supported`);
   return unit;
@@ -43,7 +60,11 @@ export const getStandardConversionFactor = (fromValue, toValue) => {
   return units[from].factor / units[to].factor;
 };
 
-export const convertIngredientToStockUnit = ({ quantity: quantityValue, ingredientUnit, stockUnit }) => {
+export const convertIngredientToStockUnit = ({
+  quantity: quantityValue,
+  ingredientUnit,
+  stockUnit,
+}) => {
   const quantity = toPositiveQuantity(quantityValue);
   const normalizedIngredientUnit = normalizeUnit(ingredientUnit || stockUnit, 'Ingredient unit');
   const normalizedStockUnit = normalizeUnit(stockUnit, 'Stock unit');
@@ -52,7 +73,9 @@ export const convertIngredientToStockUnit = ({ quantity: quantityValue, ingredie
     normalizedStockUnit,
   );
   if (conversionFactor === null) {
-    throw createError(`${normalizedIngredientUnit} cannot be used for stock kept in ${normalizedStockUnit}`);
+    throw createError(
+      `${normalizedIngredientUnit} cannot be used for stock kept in ${normalizedStockUnit}`,
+    );
   }
   return {
     quantityUsed: quantity,

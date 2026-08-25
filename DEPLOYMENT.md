@@ -29,7 +29,8 @@ Create a production MongoDB database and database user. Copy its connection stri
 It will look similar to:
 
 ```env
-MONGODB_URI=mongodb+srv://restaurant_user:password@cluster.mongodb.net/restaurant_management?retryWrites=true&w=majority
+MONGODB_URI=mongodb+srv://restaurant_user:password@cluster.mongodb.net/restaurant_management?retryWrites=false&w=majority
+MONGODB_RETRY_WRITES=false
 ```
 
 Replace the username, password, cluster address, and database name with the real values. Allow network access only from the backend hosting environment when possible.
@@ -43,12 +44,18 @@ NODE_ENV=production
 APP_TIMEZONE=Asia/Kolkata
 PORT=5000
 MONGODB_URI=your-real-mongodb-connection-string
+MONGODB_RETRY_WRITES=false
 FRONTEND_URL=https://your-frontend-domain.com
 JWT_SECRET=your-private-random-secret-with-at-least-32-characters
 JWT_EXPIRES_IN=15m
+JWT_REFRESH_SECRET=a-different-private-random-secret-with-at-least-32-characters
+JWT_REFRESH_EXPIRES_IN=7d
+JWT_REFRESH_COOKIE_DAYS=7
 JSON_BODY_LIMIT=10kb
 RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX=100
+RATE_LIMIT_MAX=500
+LOGIN_RATE_LIMIT_MAX=10
+TRUST_PROXY=1
 
 ADMIN_NAME=Restaurant Owner
 ADMIN_USERNAME=admin
@@ -59,14 +66,18 @@ ADMIN_PASSWORD=your-strong-admin-password
 
 Change these important values:
 
-| Variable         | What to enter                                         |
-| ---------------- | ----------------------------------------------------- |
-| `MONGODB_URI`    | Real production MongoDB connection string             |
-| `FRONTEND_URL`   | Exact deployed frontend address, without `/api`       |
-| `JWT_SECRET`     | Unique private random value of at least 32 characters |
-| `ADMIN_EMAIL`    | Restaurant owner's login email                        |
-| `ADMIN_PHONE`    | A 7 to 15 digit phone number                          |
-| `ADMIN_PASSWORD` | A strong password used only for the first Admin       |
+| Variable             | What to enter                                              |
+| -------------------- | ---------------------------------------------------------- |
+| `MONGODB_URI`        | Real production MongoDB connection string                  |
+| `MONGODB_RETRY_WRITES` | Use `false` for MongoDB providers without retryable writes |
+| `FRONTEND_URL`       | Exact deployed frontend address, without `/api`            |
+| `JWT_SECRET`         | Unique private random value of at least 32 characters      |
+| `JWT_REFRESH_SECRET` | A different private random value of at least 32 characters |
+| `ADMIN_EMAIL`        | Restaurant owner's login email                             |
+| `ADMIN_PHONE`        | A 7 to 15 digit phone number                               |
+| `ADMIN_PASSWORD`     | A strong password used only for the first Admin            |
+
+Keep `TRUST_PROXY=1` on Vercel or a normal single-proxy host so request limits use the visitor's real IP address. Email variables are optional while `EMAIL_ENABLED=false`; the complete example is in `.env.example`.
 
 On the backend hosting service configure:
 
@@ -191,7 +202,7 @@ Run the isolated full-flow backend check when a safe MongoDB server is configure
 npm run test:production
 ```
 
-This command uses a separate temporary database and removes that temporary database after the test.
+This command uses a separate temporary database. It drops that database when the MongoDB user permits it; otherwise it deletes every temporary test record.
 
 ## Local development
 

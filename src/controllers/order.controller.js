@@ -5,6 +5,7 @@ import mongoose from 'mongoose';
 import { Bill } from '../models/bill.model.js';
 import { MenuItem } from '../models/menu-item.model.js';
 import { Order } from '../models/order.model.js';
+import { Setting } from '../models/setting.model.js';
 import { sendSuccess } from '../utils/api-response.js';
 import { buildDateFilter } from '../utils/date-range.js';
 import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
@@ -39,6 +40,22 @@ const getPagination = (query) => {
   const page = Math.max(Math.floor(Number(query.page)) || 1, 1);
   const limit = Math.min(Math.max(Math.floor(Number(query.limit)) || 20, 1), 100);
   return { page, limit };
+};
+
+const getBillingSettings = async () => {
+  const settings = await Setting.findOne({ key: 'restaurant-settings' }).select(
+    'billing.allowDiscount billing.defaultAdditionalCharge',
+  );
+  return {
+    allowDiscount: settings?.billing?.allowDiscount !== false,
+    defaultAdditionalCharge: Number(settings?.billing?.defaultAdditionalCharge || 0),
+  };
+};
+
+const validateDiscountSetting = (billingSettings, discount) => {
+  if (!billingSettings.allowDiscount && Number(discount || 0) > 0) {
+    throw createError('Discounts are currently disabled in Settings', 400);
+  }
 };
 
 const getServerPricedItems = async (items) => {
@@ -98,6 +115,7 @@ export const getOrders = async (request, response) => {
 
   const [orders, total] = await Promise.all([
     Order.find(filters)
+      .populate('biller', 'name username')
       .sort({ date: -1, createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -119,6 +137,7 @@ export const getOrders = async (request, response) => {
 
 export const getOrder = async (request, response) => {
   const order = await findOrder(request.params.id);
+  await order.populate('biller', 'name username');
   return sendSuccess(response, { message: 'Order fetched successfully', data: order });
 };
 
@@ -132,10 +151,12 @@ export const createOrder = async (request, response) => {
     throw createError('Payment type is required for a paid order', 400);
   }
   const pricedItems = await getServerPricedItems(request.body.items);
+  const billingSettings = await getBillingSettings();
+  validateDiscountSetting(billingSettings, request.body.discount);
   const totals = calculateOrderTotals(
     pricedItems,
     request.body.discount,
-    request.body.additionalCharges,
+    request.body.additionalCharges ?? billingSettings.defaultAdditionalCharge,
   );
   const order = await Order.create({
     orderNo: generateOrderNo(),
@@ -185,10 +206,7 @@ export const updateOrder = async (request, response) => {
       throw createError('This order has a bill. Update its payment from Billing.', 400);
     }
   }
-  if (
-    nextStatus === 'Cancelled' &&
-    (order.paymentRecorded || order.paymentStatus !== 'Not Paid')
-  ) {
+  if (nextStatus === 'Cancelled' && (order.paymentRecorded || order.paymentStatus !== 'Not Paid')) {
     throw createError('A paid order cannot be cancelled without a payment reversal', 400);
   }
   if (order.orderStatus === 'Completed') {
@@ -221,6 +239,10 @@ export const updateOrder = async (request, response) => {
   const pricedItems = request.body.items
     ? await getServerPricedItems(request.body.items)
     : order.items;
+  const billingSettings = await getBillingSettings();
+  if (request.body.discount !== undefined) {
+    validateDiscountSetting(billingSettings, request.body.discount);
+  }
   const totals = calculateOrderTotals(
     pricedItems,
     request.body.discount ?? order.discount,

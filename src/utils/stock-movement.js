@@ -31,7 +31,7 @@ const statusExpression = (quantityExpression) => ({
   },
 });
 
-const rollbackMovement = async ({ itemBefore, type, quantity, historyId }) => {
+const rollbackMovement = async ({ itemBefore, type, quantity, historyId, session }) => {
   const quantityExpression =
     type === 'IN'
       ? { $round: [{ $subtract: ['$currentQuantity', quantity] }, 6] }
@@ -48,8 +48,9 @@ const rollbackMovement = async ({ itemBefore, type, quantity, historyId }) => {
 
   await StockItem.findByIdAndUpdate(itemBefore._id, [{ $set: fields }], {
     updatePipeline: true,
+    session,
   });
-  if (historyId) await StockHistory.findByIdAndDelete(historyId);
+  if (historyId) await StockHistory.findByIdAndDelete(historyId, { session });
 };
 
 export const applyStockMovement = async ({
@@ -65,14 +66,16 @@ export const applyStockMovement = async ({
   date,
   note,
   user,
+  session,
 }) => {
   if (!mongoose.isValidObjectId(stockItemId)) throw createError('Invalid stock item ID', 400);
   if (!['IN', 'OUT'].includes(type))
     throw createError('Stock movement type must be IN or OUT', 400);
 
   const quantity = toPositiveQuantity(quantityValue);
-  const itemBefore = await StockItem.findById(stockItemId);
+  const itemBefore = await StockItem.findById(stockItemId).session(session || null);
   if (!itemBefore) throw createError('Stock item not found', 404);
+  if (!itemBefore.isActive) throw createError('This stock item is inactive', 400);
 
   const supplierId = optionalObjectId(supplierValue, 'supplier ID');
   const purchaseId = optionalObjectId(purchaseValue, 'purchase ID');
@@ -102,10 +105,11 @@ export const applyStockMovement = async ({
   const item = await StockItem.findOneAndUpdate(itemQuery, [{ $set: fields }], {
     returnDocument: 'after',
     updatePipeline: true,
+    session,
   });
 
   if (!item) {
-    const exists = await StockItem.exists({ _id: itemBefore._id });
+    const exists = await StockItem.exists({ _id: itemBefore._id }).session(session || null);
     if (!exists) throw createError('Stock item not found', 404);
     throw createError(
       `Insufficient stock. Available quantity is ${itemBefore.currentQuantity} ${itemBefore.unit}`,
@@ -119,36 +123,43 @@ export const applyStockMovement = async ({
       : roundStockQuantity(item.currentQuantity + quantity);
   let history;
   try {
-    history = await StockHistory.create({
-      stockItemId: item._id,
-      itemName: item.itemName,
-      type,
-      quantity,
-      previousQuantity,
-      newQuantity: item.currentQuantity,
-      reference: reference || '',
-      reason: reason || (type === 'IN' ? 'Stock In' : 'Other'),
-      date: date || new Date(),
-      user: userId,
-      supplierId,
-      purchaseId,
-      orderId,
-      note: note || '',
-    });
+    const historyRows = await StockHistory.create(
+      [
+        {
+          stockItemId: item._id,
+          itemName: item.itemName,
+          type,
+          quantity,
+          previousQuantity,
+          newQuantity: item.currentQuantity,
+          reference: reference || '',
+          reason: reason || (type === 'IN' ? 'Stock In' : 'Other'),
+          date: date || new Date(),
+          user: userId,
+          supplierId,
+          purchaseId,
+          orderId,
+          note: note || '',
+        },
+      ],
+      { session },
+    );
+    [history] = historyRows;
   } catch (error) {
-    await rollbackMovement({ itemBefore, type, quantity });
+    if (!session) await rollbackMovement({ itemBefore, type, quantity });
     throw error;
   }
 
   return { item, history, itemBefore, type, quantity };
 };
 
-export const rollbackAppliedMovement = (movement) =>
+export const rollbackAppliedMovement = (movement, session) =>
   rollbackMovement({
     itemBefore: movement.itemBefore,
     type: movement.type,
     quantity: movement.quantity,
     historyId: movement.history._id,
+    session,
   });
 
 export const calculateCurrentStatus = getStockStatus;

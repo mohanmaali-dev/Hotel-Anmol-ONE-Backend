@@ -3,11 +3,21 @@ import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 
 export const createAccessToken = (userId) =>
-  jwt.sign({ userId }, env.jwtAccessSecret, { expiresIn: env.jwtAccessExpiresIn });
+  jwt.sign({ userId, type: 'access' }, env.jwtAccessSecret, {
+    expiresIn: env.jwtAccessExpiresIn,
+  });
 
 export const createRefreshToken = (userId) =>
-  jwt.sign({ userId }, env.jwtRefreshSecret, { expiresIn: env.jwtRefreshExpiresIn });
+  jwt.sign({ userId, type: 'refresh' }, env.jwtRefreshSecret, {
+    expiresIn: env.jwtRefreshExpiresIn,
+  });
 
-export const verifyAccessToken = (token) => jwt.verify(token, env.jwtAccessSecret);
+const verifyToken = (token, secret, expectedType) => {
+  const payload = jwt.verify(token, secret);
+  if (payload.type !== expectedType) throw new jwt.JsonWebTokenError('Invalid token type');
+  return payload;
+};
 
-export const verifyRefreshToken = (token) => jwt.verify(token, env.jwtRefreshSecret);
+export const verifyAccessToken = (token) => verifyToken(token, env.jwtAccessSecret, 'access');
+
+export const verifyRefreshToken = (token) => verifyToken(token, env.jwtRefreshSecret, 'refresh');

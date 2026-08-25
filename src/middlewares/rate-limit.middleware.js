@@ -7,8 +7,19 @@ export const globalRateLimiter = rateLimit({
   max: env.rateLimitMax,
   message: {
     success: false,
-    message: 'Too many requests, plese try again later',
+    message: 'Too many requests, please try again later',
   },
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
+
+export const loginRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: env.loginRateLimitMax,
+  skipSuccessfulRequests: true,
+  message: { success: false, message: 'Too many login attempts. Please wait and try again.' },
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
 });
 
 export const emailRateLimiter = rateLimit({

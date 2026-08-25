@@ -11,7 +11,7 @@
     "seed:admin": "node --env-file-if-exists=.env.production src/scripts/seed-admin.js",
     "test": "node --test test/*.test.js",
     "test:smoke": "node test/smoke-flow.js",
-    "test:production": "node test/production-flow.js",
+    "test:production": "node --env-file-if-exists=.env.production test/production-flow.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier . --write",

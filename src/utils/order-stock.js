@@ -2,6 +2,7 @@ import { MenuItem } from '../models/menu-item.model.js';
 import { Order } from '../models/order.model.js';
 import { combineRequiredIngredients, checkStockRequirements } from './menu-stock.js';
 import { applyStockMovement, rollbackAppliedMovement } from './stock-movement.js';
+import { runInTransaction } from './transaction.js';
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -22,10 +23,12 @@ const createInsufficientStockError = (availability) => {
   return error;
 };
 
-export const getOrderStockRequirements = async (order) => {
+export const getOrderStockRequirements = async (order, { session } = {}) => {
   const legacyItems = order.items.filter((item) => item.recipeCaptured !== true);
   const menuItemIds = [...new Set(legacyItems.map((item) => String(item.menuItemId)))];
-  const menuItems = await MenuItem.find({ _id: { $in: menuItemIds } }).lean();
+  const menuItems = await MenuItem.find({ _id: { $in: menuItemIds } })
+    .session(session || null)
+    .lean();
   const menuById = new Map(menuItems.map((item) => [String(item._id), item]));
   const missingItems = legacyItems
     .filter((item) => !menuById.has(String(item.menuItemId)))
@@ -55,7 +58,7 @@ const unlockOrder = (orderId) =>
     { $set: { stockProcessing: false } },
   );
 
-export const completeOrderWithStock = async (order, user) => {
+const executeOrderCompletion = async (order, user, session) => {
   if (order.stockDeducted) return order;
 
   const claimedOrder = await Order.findOneAndUpdate(
@@ -67,11 +70,11 @@ export const completeOrderWithStock = async (order, user) => {
       orderStatus: { $ne: 'Cancelled' },
     },
     { $set: { stockProcessing: true } },
-    { returnDocument: 'after', runValidators: true },
+    { returnDocument: 'after', runValidators: true, session },
   );
 
   if (!claimedOrder) {
-    const latestOrder = await Order.findById(order._id);
+    const latestOrder = await Order.findById(order._id).session(session || null);
     if (!latestOrder) throw createError('Order not found', 404);
     if (latestOrder.stockDeducted) return latestOrder;
     if (latestOrder.stockProcessing) {
@@ -83,8 +86,8 @@ export const completeOrderWithStock = async (order, user) => {
   const appliedMovements = [];
   let requirements = [];
   try {
-    requirements = await getOrderStockRequirements(claimedOrder);
-    const availability = await checkStockRequirements(requirements);
+    requirements = await getOrderStockRequirements(claimedOrder, { session });
+    const availability = await checkStockRequirements(requirements, { session });
     if (!availability.available) throw createInsufficientStockError(availability);
 
     for (const ingredient of requirements) {
@@ -98,6 +101,7 @@ export const completeOrderWithStock = async (order, user) => {
         date: new Date(),
         note: `Ingredients used for ${claimedOrder.orderNo}.`,
         user,
+        session,
       });
       appliedMovements.push(movement);
     }
@@ -106,9 +110,10 @@ export const completeOrderWithStock = async (order, user) => {
     claimedOrder.stockDeducted = true;
     claimedOrder.stockProcessing = false;
     claimedOrder.stockDeductedAt = new Date();
-    await claimedOrder.save();
+    await claimedOrder.save({ session });
     return claimedOrder;
   } catch (error) {
+    if (session) throw error;
     const rollbackResults = await Promise.allSettled(
       appliedMovements.reverse().map((movement) => rollbackAppliedMovement(movement)),
     );
@@ -127,3 +132,9 @@ export const completeOrderWithStock = async (order, user) => {
     throw error;
   }
 };
+
+export const completeOrderWithStock = async (order, user) =>
+  runInTransaction(
+    (session) => executeOrderCompletion(order, user, session),
+    () => executeOrderCompletion(order, user),
+  );

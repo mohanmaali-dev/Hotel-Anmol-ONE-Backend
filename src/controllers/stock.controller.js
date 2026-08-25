@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 import { User } from '../modules/users/user.model.js';
 import { MenuItem } from '../models/menu-item.model.js';
+import { Order } from '../models/order.model.js';
 import { Purchase } from '../models/purchase.model.js';
 import { StockCategory } from '../models/stock-category.model.js';
 import { StockHistory } from '../models/stock-history.model.js';
@@ -12,6 +13,8 @@ import { buildDateFilter } from '../utils/date-range.js';
 import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
 import { toNonNegativeStockNumber } from '../utils/stock-calculations.js';
 import { applyStockMovement } from '../utils/stock-movement.js';
+import { runInTransaction } from '../utils/transaction.js';
+import { normalizeUnit } from '../utils/unit-conversion.js';
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -89,10 +92,23 @@ const findStockItem = async (id) => {
   return item;
 };
 
+const validateSupplier = async (supplierId, allowInactiveId) => {
+  if (!supplierId) return null;
+  if (!mongoose.isValidObjectId(supplierId)) throw createError('Invalid supplier ID', 400);
+  const supplier = await Supplier.findById(supplierId).select('status');
+  if (!supplier) throw createError('Supplier not found', 404);
+  if (supplier.status !== 'Active' && String(supplier._id) !== String(allowInactiveId || '')) {
+    throw createError('Please select an active supplier', 400);
+  }
+  return supplier._id;
+};
+
 export const getStockCategories = async (request, response) => {
   await syncStockCategories();
   const filters = {};
   if (request.query.status) filters.status = request.query.status;
+  if (request.query.active === 'true') filters.status = 'Active';
+  if (request.query.active === 'false') filters.status = 'Inactive';
   const categories = await StockCategory.find(filters).sort({ name: 1 });
   return sendSuccess(response, {
     message: 'Stock categories fetched successfully',
@@ -192,6 +208,11 @@ export const getStockItem = async (request, response) => {
 };
 
 export const createStockItem = async (request, response) => {
+  const itemName = String(request.body.itemName || '').trim();
+  if (!itemName) throw createError('Item name is required', 400);
+  if (await StockItem.exists({ itemName: exactNameRegex(itemName) })) {
+    throw createError('A stock item with this name already exists', 409);
+  }
   const category = await getStockCategoryForItem(request.body.category);
   const openingQuantity = toNonNegativeStockNumber(
     request.body.currentQuantity ?? request.body.openingQuantity,
@@ -199,37 +220,44 @@ export const createStockItem = async (request, response) => {
   );
   const purchasePrice = toNonNegativeStockNumber(request.body.purchasePrice, 'Purchase price');
   const minimumStock = toNonNegativeStockNumber(request.body.minimumStock, 'Minimum stock');
-  const item = await StockItem.create({
-    itemName: request.body.itemName,
-    category: category.name,
-    unit: request.body.unit,
-    currentQuantity: 0,
-    purchasePrice,
-    minimumStock,
-    supplierId: request.body.supplierId || null,
-  });
-
-  let savedItem = item;
-  if (openingQuantity > 0) {
+  const supplierId = await validateSupplier(request.body.supplierId);
+  const createWithOpeningStock = async (session) => {
+    const [item] = await StockItem.create(
+      [
+        {
+          itemName,
+          category: category.name,
+          unit: normalizeUnit(request.body.unit),
+          currentQuantity: 0,
+          purchasePrice,
+          minimumStock,
+          supplierId,
+        },
+      ],
+      { session },
+    );
+    if (openingQuantity <= 0) return item;
     try {
       const result = await applyStockMovement({
         stockItemId: item._id,
         type: 'IN',
         quantity: openingQuantity,
         purchasePrice,
-        supplierId: request.body.supplierId,
+        supplierId,
         reference: 'Opening Stock',
         reason: 'Opening Stock',
         date: request.body.date,
         note: 'Opening quantity added when the stock item was created.',
         user: request.userId,
+        session,
       });
-      savedItem = result.item;
+      return result.item;
     } catch (error) {
-      await StockItem.findByIdAndDelete(item._id);
+      if (!session) await StockItem.findByIdAndDelete(item._id);
       throw error;
     }
-  }
+  };
+  const savedItem = await runInTransaction(createWithOpeningStock, () => createWithOpeningStock());
 
   return sendSuccess(response, {
     statusCode: 201,
@@ -245,7 +273,21 @@ export const updateStockItem = async (request, response) => {
 
   const item = await findStockItem(request.params.id);
   const previousItemName = item.itemName;
-  if (request.body.unit !== undefined && request.body.unit !== item.unit) {
+  if (request.body.supplierId !== undefined) {
+    request.body.supplierId = await validateSupplier(request.body.supplierId, item.supplierId);
+  }
+  if (request.body.itemName !== undefined) {
+    const itemName = String(request.body.itemName || '').trim();
+    if (!itemName) throw createError('Item name is required', 400);
+    const duplicate = await StockItem.exists({
+      _id: { $ne: item._id },
+      itemName: exactNameRegex(itemName),
+    });
+    if (duplicate) throw createError('A stock item with this name already exists', 409);
+    request.body.itemName = itemName;
+  }
+  const nextUnit = request.body.unit !== undefined ? normalizeUnit(request.body.unit) : item.unit;
+  if (nextUnit !== item.unit) {
     const [usedInRecipe, usedInPurchase, hasHistory] = await Promise.all([
       MenuItem.exists({ 'ingredients.stockItemId': item._id }),
       Purchase.exists({ 'items.stockItemId': item._id }),
@@ -255,6 +297,33 @@ export const updateStockItem = async (request, response) => {
       throw createError('The unit cannot be changed after this stock item has been used', 400);
     }
   }
+  item.unit = nextUnit;
+  if (request.body.isActive === false && item.isActive) {
+    const [availableRecipe, openOrder, openPurchase] = await Promise.all([
+      MenuItem.exists({
+        availability: 'Available',
+        trackStock: true,
+        'ingredients.stockItemId': item._id,
+      }),
+      Order.exists({
+        orderStatus: { $in: ['Pending', 'Preparing', 'Ready'] },
+        'items.ingredients.stockItemId': item._id,
+      }),
+      Purchase.exists({
+        purchaseStatus: { $in: ['Draft', 'Ordered'] },
+        'items.stockItemId': item._id,
+      }),
+    ]);
+    if (availableRecipe) {
+      throw createError('Make menu items using this stock item Unavailable first', 400);
+    }
+    if (openOrder) {
+      throw createError('Complete or cancel open orders using this stock item first', 400);
+    }
+    if (openPurchase) {
+      throw createError('Finish or cancel open purchases using this stock item first', 400);
+    }
+  }
   if (
     request.body.category !== undefined &&
     categoryNameKey(request.body.category) !== categoryNameKey(item.category)
@@ -262,10 +331,9 @@ export const updateStockItem = async (request, response) => {
     const category = await getStockCategoryForItem(request.body.category);
     item.category = category.name;
   }
-  const editableFields = ['itemName', 'supplierId'];
-  editableFields.forEach((field) => {
-    if (request.body[field] !== undefined) item[field] = request.body[field] || null;
-  });
+  if (request.body.itemName !== undefined) item.itemName = request.body.itemName;
+  if (request.body.supplierId !== undefined) item.supplierId = request.body.supplierId || null;
+  if (request.body.isActive !== undefined) item.isActive = Boolean(request.body.isActive);
   if (request.body.purchasePrice !== undefined) {
     item.purchasePrice = toNonNegativeStockNumber(request.body.purchasePrice, 'Purchase price');
   }
@@ -302,19 +370,23 @@ export const stockIn = async (request, response) => {
   if (request.body.purchaseId) {
     throw createError('Receive the purchase from the Purchases page to update stock', 400);
   }
-  const result = await applyStockMovement({
-    stockItemId: request.body.stockItemId,
-    type: 'IN',
-    quantity: request.body.quantity,
-    purchasePrice: request.body.purchasePrice,
-    supplierId: request.body.supplierId,
-    purchaseId: request.body.purchaseId,
-    reference: request.body.reference,
-    reason: 'Stock In',
-    date: request.body.date,
-    note: request.body.note,
-    user: request.userId,
-  });
+  const supplierId = await validateSupplier(request.body.supplierId);
+  const move = (session) =>
+    applyStockMovement({
+      stockItemId: request.body.stockItemId,
+      type: 'IN',
+      quantity: request.body.quantity,
+      purchasePrice: request.body.purchasePrice,
+      supplierId,
+      purchaseId: request.body.purchaseId,
+      reference: request.body.reference,
+      reason: 'Stock In',
+      date: request.body.date,
+      note: request.body.note,
+      user: request.userId,
+      session,
+    });
+  const result = await runInTransaction(move, () => move());
 
   return sendSuccess(response, {
     statusCode: 201,
@@ -328,16 +400,19 @@ export const stockOut = async (request, response) => {
   if (!allowedReasons.includes(request.body.reason)) {
     throw createError('A valid Stock Out reason is required', 400);
   }
-  const result = await applyStockMovement({
-    stockItemId: request.body.stockItemId,
-    type: 'OUT',
-    quantity: request.body.quantity,
-    reference: request.body.reference,
-    reason: request.body.reason,
-    date: request.body.date,
-    note: request.body.note,
-    user: request.userId,
-  });
+  const move = (session) =>
+    applyStockMovement({
+      stockItemId: request.body.stockItemId,
+      type: 'OUT',
+      quantity: request.body.quantity,
+      reference: request.body.reference,
+      reason: request.body.reason,
+      date: request.body.date,
+      note: request.body.note,
+      user: request.userId,
+      session,
+    });
+  const result = await runInTransaction(move, () => move());
 
   return sendSuccess(response, {
     statusCode: 201,
@@ -369,7 +444,9 @@ export const getStockHistory = async (request, response) => {
   ]);
   const historyItemIds = [...new Set(historyRows.map((row) => String(row.stockItemId)))];
   const unitItems = historyItemIds.length
-    ? await StockItem.find({ _id: { $in: historyItemIds } }).select('unit').lean()
+    ? await StockItem.find({ _id: { $in: historyItemIds } })
+        .select('unit')
+        .lean()
     : [];
   const unitsByItem = new Map(unitItems.map((item) => [String(item._id), item.unit]));
   const history = historyRows.map((row) => ({

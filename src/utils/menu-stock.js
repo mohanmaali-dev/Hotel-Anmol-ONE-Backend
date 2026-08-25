@@ -28,8 +28,7 @@ export const combineRequiredIngredients = (menuItemQuantities) => {
         current.requiredQuantity = roundStockQuantity(
           current.requiredQuantity + ingredient.requiredQuantity,
         );
-      }
-      else {
+      } else {
         combined.set(key, {
           stockItemId: ingredient.stockItemId,
           stockItemName: ingredient.stockItemName,
@@ -43,7 +42,7 @@ export const combineRequiredIngredients = (menuItemQuantities) => {
   return [...combined.values()];
 };
 
-export const checkStockRequirements = async (requirements) => {
+export const checkStockRequirements = async (requirements, { session } = {}) => {
   if (requirements.length === 0) {
     return { available: true, ingredients: [] };
   }
@@ -52,6 +51,7 @@ export const checkStockRequirements = async (requirements) => {
     _id: { $in: requirements.map((ingredient) => ingredient.stockItemId) },
   })
     .select('itemName currentQuantity unit status')
+    .session(session || null)
     .lean();
   const stockById = new Map(stockItems.map((item) => [String(item._id), item]));
 
@@ -76,8 +76,8 @@ export const checkStockRequirements = async (requirements) => {
   };
 };
 
-export const checkIngredientAvailability = async (menuItem, orderedQuantity = 1) => {
+export const checkIngredientAvailability = async (menuItem, orderedQuantity = 1, options) => {
   const requirements = calculateRequiredIngredients(menuItem, orderedQuantity);
-  const availability = await checkStockRequirements(requirements);
+  const availability = await checkStockRequirements(requirements, options);
   return { ...availability, trackStock: menuItem.trackStock };
 };

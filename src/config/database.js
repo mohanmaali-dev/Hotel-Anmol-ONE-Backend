@@ -20,6 +20,9 @@ export const connectDatabase = async () => {
     .connect(env.mongoUri, {
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 10000,
+      // Some Mongo-compatible production providers do not implement retryable writes.
+      // This explicit option also overrides retryWrites in an older connection URL.
+      retryWrites: env.mongoRetryWrites,
     })
     .then(() => {
       logger.info('MongoDB connected');

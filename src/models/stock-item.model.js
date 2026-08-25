@@ -8,6 +8,7 @@ const stockItemSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
+    itemNameKey: { type: String, unique: true, sparse: true, select: false },
     category: {
       type: String,
       required: true,
@@ -42,6 +43,7 @@ const stockItemSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true,
+      index: true,
     },
     status: {
       type: String,
@@ -54,6 +56,7 @@ const stockItemSchema = new mongoose.Schema(
 );
 
 stockItemSchema.pre('validate', function calculateStockStatus() {
+  this.itemNameKey = this.itemName?.trim().toLocaleLowerCase('en-IN');
   if (this.currentQuantity <= 0) this.status = 'Out of Stock';
   else if (this.currentQuantity <= this.minimumStock) this.status = 'Low Stock';
   else this.status = 'In Stock';

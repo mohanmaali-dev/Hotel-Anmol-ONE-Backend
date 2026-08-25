@@ -11,7 +11,7 @@ export const auth = () => async (request, _response, next) => {
   try {
     const authorization = request.headers.authorization;
     const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice(7) : null;
-    const token = request.cookies?.accessToken || bearerToken;
+    const token = bearerToken || request.cookies?.accessToken;
     if (!token) return next(createError('Authentication required', 401));
 
     const payload = verifyAccessToken(token);

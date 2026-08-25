@@ -7,7 +7,7 @@ import mongoose from 'mongoose';
 const sourceMongoUri = process.env.MONGODB_URI;
 if (!sourceMongoUri) throw new Error('MONGODB_URI is required');
 
-const databaseName = `restaurant_deployment_check_${Date.now()}_${randomInt(1000, 10000)}`;
+const databaseName = `rms_test_${Date.now()}_${randomInt(1000, 10000)}`;
 const mongoUrl = new URL(sourceMongoUri);
 mongoUrl.pathname = `/${databaseName}`;
 const testMongoUri = mongoUrl.toString();
@@ -69,7 +69,15 @@ const removeTestDatabase = async () => {
     await connection.close();
     throw new Error('Refusing to remove an unexpected database');
   }
-  await connection.dropDatabase();
+  try {
+    await connection.dropDatabase();
+  } catch (error) {
+    if (!/not allowed to do action \[dropDatabase\]/i.test(error.message)) throw error;
+    const collections = await connection.db.listCollections().toArray();
+    await Promise.all(
+      collections.map((collection) => connection.db.collection(collection.name).deleteMany({})),
+    );
+  }
   await connection.close();
 };
 

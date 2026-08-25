@@ -71,9 +71,7 @@ export const calculateOrderTotals = (items, discountValue = 0, additionalCharges
 
   const discount = toNonNegativeNumber(discountValue, 'Discount');
   const additionalCharges = toNonNegativeNumber(additionalChargesValue, 'Additional charges');
-  const subtotal = roundMoney(
-    normalizedItems.reduce((total, item) => total + item.amount, 0),
-  );
+  const subtotal = roundMoney(normalizedItems.reduce((total, item) => total + item.amount, 0));
   const finalAmount = roundMoney(subtotal - discount + additionalCharges);
 
   if (finalAmount < 0) {

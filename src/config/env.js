@@ -2,6 +2,11 @@ import 'dotenv/config';
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 
+const parseBoolean = (value, fallback = false) => {
+  if (value === undefined || value === '') return fallback;
+  return String(value).toLowerCase() === 'true';
+};
+
 const parseOrigins = (value) =>
   String(value || '')
     .split(',')
@@ -19,13 +24,16 @@ export const env = {
   nodeEnv,
   port: Number(process.env.PORT) || 5000,
   mongoUri: process.env.MONGODB_URI,
+  mongoRetryWrites: parseBoolean(process.env.MONGODB_RETRY_WRITES, false),
   frontendUrl: configuredFrontendOrigins[0],
   corsOrigins: [
     ...new Set(nodeEnv === 'production' ? configuredFrontendOrigins : developmentOrigins),
   ],
   jsonBodyLimit: process.env.JSON_BODY_LIMIT || '10kb',
   rateLimitWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 900000,
-  rateLimitMax: Number(process.env.RATE_LIMIT_MAX) || 100,
+  rateLimitMax: Number(process.env.RATE_LIMIT_MAX) || 500,
+  loginRateLimitMax: Number(process.env.LOGIN_RATE_LIMIT_MAX) || 10,
+  trustProxy: Number(process.env.TRUST_PROXY ?? (nodeEnv === 'production' ? 1 : 0)),
   appTimezone: process.env.APP_TIMEZONE || 'Asia/Kolkata',
   emailHost: process.env.EMAIL_HOST,
   emailEnabled: process.env.EMAIL_ENABLED === 'true',
@@ -37,7 +45,7 @@ export const env = {
   emailFrom: process.env.EMAIL_FROM,
   clientUrl: configuredFrontendOrigins[0] || 'http://localhost:5173',
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET,
-  jwtRefreshSecret: process.env.JWT_REFRESH_SECRET,
+  jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
   jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || process.env.JWT_EXPIRES_IN || '15m',
   jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
   jwtRefreshCookieDays: Number(process.env.JWT_REFRESH_COOKIE_DAYS) || 7,
@@ -54,6 +62,9 @@ export const validateEnvironment = () => {
   }
   if (env.nodeEnv === 'production' && env.jwtAccessSecret.length < 32) {
     throw new Error('JWT_SECRET must contain at least 32 characters in production');
+  }
+  if (env.nodeEnv === 'production' && env.jwtRefreshSecret.length < 32) {
+    throw new Error('JWT_REFRESH_SECRET must contain at least 32 characters in production');
   }
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: env.appTimezone }).format();

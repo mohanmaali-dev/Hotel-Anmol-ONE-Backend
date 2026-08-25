@@ -60,6 +60,7 @@ export const getExpenses = async (request, response) => {
 
   const [expenses, total] = await Promise.all([
     Expense.find(filters)
+      .populate('addedBy', 'name username')
       .sort({ date: -1, createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -75,6 +76,7 @@ export const getExpenses = async (request, response) => {
 
 export const getExpense = async (request, response) => {
   const expense = await findExpense(request.params.id);
+  await expense.populate('addedBy', 'name username');
   return sendSuccess(response, { message: 'Expense fetched successfully', data: expense });
 };
 

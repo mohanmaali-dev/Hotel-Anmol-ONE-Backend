@@ -12,8 +12,21 @@ import { addDateFilter, getReportContext } from '../utils/report-filters.js';
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const sendReport = (response, message, filters, summary, data) =>
-  sendSuccess(response, { message, filters, summary, data });
+const getPagination = (query) => {
+  const page = Math.max(Math.floor(Number(query.page)) || 1, 1);
+  const limit = Math.min(Math.max(Math.floor(Number(query.limit)) || 20, 1), 100);
+  return { page, limit, skip: (page - 1) * limit };
+};
+
+const sendReport = (response, message, filters, summary, data, pagination) =>
+  sendSuccess(response, { message, filters, summary, data, ...(pagination ? { pagination } : {}) });
+
+const paginationResult = (page, limit, total) => ({
+  page,
+  limit,
+  total,
+  pages: Math.ceil(total / limit),
+});
 
 const buildSaleMatch = (filters, dateRange) => {
   const match = {};
@@ -43,6 +56,7 @@ const buildPurchaseMatch = (filters, dateRange) => {
 
 export const getSalesReport = async (request, response) => {
   const { filters, dateRange } = getReportContext(request.query);
+  const { page, limit, skip } = getPagination(request.query);
   const match = buildSaleMatch(filters, dateRange);
   const [result] = await Sale.aggregate([
     { $match: match },
@@ -96,6 +110,18 @@ export const getSalesReport = async (request, response) => {
             },
           },
           { $sort: { date: -1 } },
+          { $skip: skip },
+          { $limit: limit },
+        ],
+        dailyCount: [
+          {
+            $group: {
+              _id: {
+                $dateToString: { format: '%Y-%m-%d', date: '$date', timezone: env.appTimezone },
+              },
+            },
+          },
+          { $count: 'total' },
         ],
       },
     },
@@ -115,13 +141,15 @@ export const getSalesReport = async (request, response) => {
     filters,
     summary,
     result?.daily || [],
+    paginationResult(page, limit, result?.dailyCount[0]?.total || 0),
   );
 };
 
 export const getPurchaseReport = async (request, response) => {
   const { filters, dateRange } = getReportContext(request.query);
+  const { page, limit, skip } = getPagination(request.query);
   const match = buildPurchaseMatch(filters, dateRange);
-  const [totals, supplierWise, rows] = await Promise.all([
+  const [totals, supplierWise, rows, totalRows] = await Promise.all([
     Purchase.aggregate([
       { $match: match },
       {
@@ -166,7 +194,10 @@ export const getPurchaseReport = async (request, response) => {
         'purchaseNo supplierId supplierName purchaseDate supplierInvoiceNo finalAmount paidAmount dueAmount paymentType paymentStatus purchaseStatus',
       )
       .sort({ purchaseDate: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
       .lean(),
+    Purchase.countDocuments(match),
   ]);
   const summary = {
     ...(totals[0] || {
@@ -177,16 +208,24 @@ export const getPurchaseReport = async (request, response) => {
     }),
     supplierWise,
   };
-  return sendReport(response, 'Purchase report fetched successfully', filters, summary, rows);
+  return sendReport(
+    response,
+    'Purchase report fetched successfully',
+    filters,
+    summary,
+    rows,
+    paginationResult(page, limit, totalRows),
+  );
 };
 
 export const getExpenseReport = async (request, response) => {
   const { filters, dateRange } = getReportContext(request.query);
+  const { page, limit, skip } = getPagination(request.query);
   const match = {};
   if (filters.category) match.category = filters.category;
   if (filters.paymentType) match.paymentType = filters.paymentType;
   addDateFilter(match, 'date', dateRange);
-  const [totals, byCategory, rows] = await Promise.all([
+  const [totals, byCategory, rows, totalRows] = await Promise.all([
     Expense.aggregate([
       { $match: match },
       { $group: { _id: null, totalExpenses: { $sum: '$amount' } } },
@@ -198,51 +237,93 @@ export const getExpenseReport = async (request, response) => {
       { $project: { _id: 0, category: '$_id', amount: 1 } },
       { $sort: { amount: -1, category: 1 } },
     ]),
-    Expense.find(match).sort({ date: -1, createdAt: -1 }).lean(),
+    Expense.find(match).sort({ date: -1, createdAt: -1 }).skip(skip).limit(limit).lean(),
+    Expense.countDocuments(match),
   ]);
   const summary = { totalExpenses: totals[0]?.totalExpenses || 0, byCategory };
-  return sendReport(response, 'Expense report fetched successfully', filters, summary, rows);
+  return sendReport(
+    response,
+    'Expense report fetched successfully',
+    filters,
+    summary,
+    rows,
+    paginationResult(page, limit, totalRows),
+  );
 };
 
 export const getStockReport = async (request, response) => {
   const { filters, dateRange } = getReportContext(request.query);
+  const { page, limit, skip } = getPagination(request.query);
   const itemMatch = {};
   if (filters.category) itemMatch.category = filters.category;
   if (filters.status) itemMatch.status = filters.status;
   if (filters.supplier && mongoose.isValidObjectId(filters.supplier)) {
     itemMatch.supplierId = filters.supplier;
   }
-  const stockItems = await StockItem.find(itemMatch).sort({ itemName: 1 });
+  const [stockItems, allStockItemIds, stockTotals] = await Promise.all([
+    StockItem.find(itemMatch).sort({ itemName: 1 }).skip(skip).limit(limit),
+    StockItem.distinct('_id', itemMatch),
+    StockItem.aggregate([
+      { $match: itemMatch },
+      {
+        $group: {
+          _id: null,
+          totalStockItems: { $sum: 1 },
+          totalStockValue: { $sum: { $multiply: ['$currentQuantity', '$purchasePrice'] } },
+          lowStockItems: { $sum: { $cond: [{ $eq: ['$status', 'Low Stock'] }, 1, 0] } },
+          outOfStockItems: {
+            $sum: { $cond: [{ $eq: ['$status', 'Out of Stock'] }, 1, 0] },
+          },
+        },
+      },
+      { $project: { _id: 0 } },
+    ]),
+  ]);
   const hasItemFilters = Object.keys(itemMatch).length > 0;
   const movementMatch = {};
-  if (hasItemFilters) movementMatch.stockItemId = { $in: stockItems.map((item) => item._id) };
+  if (hasItemFilters) movementMatch.stockItemId = { $in: allStockItemIds };
   addDateFilter(movementMatch, 'date', dateRange);
   const movementTotals = await StockHistory.aggregate([
     { $match: movementMatch },
-    { $group: { _id: '$type', quantity: { $sum: '$quantity' } } },
-  ]);
-  const movementByType = Object.fromEntries(
-    movementTotals.map((movement) => [movement._id, movement.quantity]),
-  );
-  const summary = stockItems.reduce(
-    (result, item) => {
-      result.totalStockItems += 1;
-      result.totalStockValue += item.currentQuantity * item.purchasePrice;
-      if (item.status === 'Low Stock') result.lowStockItems += 1;
-      if (item.status === 'Out of Stock') result.outOfStockItems += 1;
-      return result;
-    },
+    { $lookup: { from: 'stockitems', localField: 'stockItemId', foreignField: '_id', as: 'item' } },
+    { $set: { unit: { $ifNull: [{ $arrayElemAt: ['$item.unit', 0] }, 'Unknown'] } } },
     {
+      $group: {
+        _id: { type: '$type', unit: '$unit' },
+        quantity: { $sum: '$quantity' },
+        movements: { $sum: 1 },
+      },
+    },
+  ]);
+  const movementCount = (type) =>
+    movementTotals
+      .filter((movement) => movement._id.type === type)
+      .reduce((total, movement) => total + movement.movements, 0);
+  const movementByUnit = (type) =>
+    movementTotals
+      .filter((movement) => movement._id.type === type)
+      .map((movement) => ({ unit: movement._id.unit, quantity: movement.quantity }));
+  const summary = {
+    ...(stockTotals[0] || {
       totalStockItems: 0,
       totalStockValue: 0,
       lowStockItems: 0,
       outOfStockItems: 0,
-      totalStockIn: movementByType.IN || 0,
-      totalStockOut: movementByType.OUT || 0,
-    },
-  );
+    }),
+    totalStockIn: movementCount('IN'),
+    totalStockOut: movementCount('OUT'),
+    stockInByUnit: movementByUnit('IN'),
+    stockOutByUnit: movementByUnit('OUT'),
+  };
   const rows = stockItems.map((item) => item.toObject({ virtuals: true }));
-  return sendReport(response, 'Stock report fetched successfully', filters, summary, rows);
+  return sendReport(
+    response,
+    'Stock report fetched successfully',
+    filters,
+    summary,
+    rows,
+    paginationResult(page, limit, summary.totalStockItems),
+  );
 };
 
 export const getPaymentReport = async (request, response) => {
@@ -283,13 +364,14 @@ export const getPaymentReport = async (request, response) => {
 
 export const getOrderReport = async (request, response) => {
   const { filters, dateRange } = getReportContext(request.query);
+  const { page, limit, skip } = getPagination(request.query);
   const match = {};
   if (filters.orderType) match.orderType = filters.orderType;
   if (filters.paymentType) match.paymentType = filters.paymentType;
   if (filters.paymentStatus) match.paymentStatus = filters.paymentStatus;
   if (filters.status) match.orderStatus = filters.status;
   addDateFilter(match, 'date', dateRange);
-  const [totals, rows] = await Promise.all([
+  const [totals, rows, totalRows] = await Promise.all([
     Order.aggregate([
       { $match: match },
       {
@@ -315,7 +397,10 @@ export const getOrderReport = async (request, response) => {
         'orderNo date orderType areaType areaRoomNo customerName finalAmount paymentType paymentStatus orderStatus biller',
       )
       .sort({ date: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
       .lean(),
+    Order.countDocuments(match),
   ]);
   return sendReport(
     response,
@@ -331,5 +416,6 @@ export const getOrderReport = async (request, response) => {
       cancelledOrders: 0,
     },
     rows,
+    paginationResult(page, limit, totalRows),
   );
 };

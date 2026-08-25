@@ -4,12 +4,13 @@ import mongoose from 'mongoose';
 
 import { Bill } from '../models/bill.model.js';
 import { Order } from '../models/order.model.js';
-import { Sale } from '../models/sale.model.js';
 import { Setting } from '../models/setting.model.js';
 import { sendSuccess } from '../utils/api-response.js';
 import { buildDateFilter } from '../utils/date-range.js';
 import { calculatePayment } from '../utils/payment-calculations.js';
+import { getPaymentHistory, recordPaymentChange } from '../utils/payment-history.js';
 import { syncSaleFromBill } from '../utils/sale-sync.js';
+import { runInTransaction } from '../utils/transaction.js';
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -55,6 +56,62 @@ const findBill = async (id) => {
   return bill;
 };
 
+const executeBillPaymentUpdate = async (id, body, userId, session) => {
+  const query = mongoose.isValidObjectId(id) ? { _id: id } : { billNo: id.trim().toUpperCase() };
+  const bill = await Bill.findOne(query).session(session || null);
+  if (!bill) throw createError('Bill not found', 404);
+  const order = await Order.findById(bill.orderId).session(session || null);
+  if (!order) throw createError('Related order not found', 404);
+
+  const paymentType = body.paymentType || bill.paymentType;
+  const payment = calculatePayment(bill.finalAmount, body.paidAmount, paymentType);
+  if (payment.paidAmount < bill.paidAmount && !String(body.reason || '').trim()) {
+    throw createError('Please enter a reason for reducing the paid amount', 400);
+  }
+  const previousPayment = {
+    paidAmount: bill.paidAmount,
+    dueAmount: bill.dueAmount,
+    paymentType: bill.paymentType,
+    paymentStatus: bill.paymentStatus,
+  };
+
+  bill.set(payment);
+  order.paymentStatus = payment.paymentStatus;
+  order.paymentType = payment.paymentType;
+  order.paymentRecorded = order.paymentRecorded || payment.paidAmount > 0;
+  await bill.save({ session });
+  await order.save({ session });
+  await syncSaleFromBill(bill, { session });
+  await recordPaymentChange({
+    recordType: 'Bill',
+    recordId: bill._id,
+    previous: previousPayment,
+    current: payment,
+    changedBy: userId,
+    reason: body.reason,
+    session,
+  });
+  return bill;
+};
+
+const syncBillRelations = (bill, order) => {
+  const updateRelations = async (session) => {
+    await syncSaleFromBill(bill, { session });
+    await Order.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          paymentStatus: bill.paymentStatus,
+          paymentType: bill.paymentType,
+          ...(bill.paidAmount > 0 ? { paymentRecorded: true } : {}),
+        },
+      },
+      { session, runValidators: true },
+    );
+  };
+  return runInTransaction(updateRelations, () => updateRelations());
+};
+
 export const getBills = async (request, response) => {
   const { page, limit } = getPagination(request.query);
   const filters = {};
@@ -72,6 +129,7 @@ export const getBills = async (request, response) => {
 
   const [bills, total] = await Promise.all([
     Bill.find(filters)
+      .populate('biller', 'name username')
       .sort({ date: -1, createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -88,7 +146,12 @@ export const getBills = async (request, response) => {
 
 export const getBill = async (request, response) => {
   const bill = await findBill(request.params.id);
-  return sendSuccess(response, { message: 'Bill fetched successfully', data: bill });
+  await bill.populate('biller', 'name username');
+  const paymentHistory = await getPaymentHistory('Bill', bill._id);
+  return sendSuccess(response, {
+    message: 'Bill fetched successfully',
+    data: { ...bill.toObject(), paymentHistory },
+  });
 };
 
 export const createBillFromOrder = async (request, response) => {
@@ -98,6 +161,7 @@ export const createBillFromOrder = async (request, response) => {
   }
   const existingBill = await Bill.findOne({ orderId: order._id });
   if (existingBill) {
+    await syncBillRelations(existingBill, order);
     return sendSuccess(response, {
       message: 'Bill already generated. Opening the existing bill.',
       data: existingBill,
@@ -140,27 +204,14 @@ export const createBillFromOrder = async (request, response) => {
     if (error?.code !== 11000) throw error;
     const duplicateBill = await Bill.findOne({ orderId: order._id });
     if (!duplicateBill) throw error;
-    await syncSaleFromBill(duplicateBill);
-    order.paymentStatus = duplicateBill.paymentStatus;
-    order.paymentType = duplicateBill.paymentType;
-    order.paymentRecorded = order.paymentRecorded || duplicateBill.paidAmount > 0;
-    await order.save();
+    await syncBillRelations(duplicateBill, order);
     return sendSuccess(response, {
       message: 'Bill already generated. Opening the existing bill.',
       data: duplicateBill,
     });
   }
 
-  try {
-    await syncSaleFromBill(bill);
-    order.paymentStatus = bill.paymentStatus;
-    order.paymentType = bill.paymentType;
-    order.paymentRecorded = order.paymentRecorded || bill.paidAmount > 0;
-    await order.save();
-  } catch (error) {
-    await Promise.allSettled([Sale.deleteOne({ billId: bill._id }), bill.deleteOne()]);
-    throw error;
-  }
+  await syncBillRelations(bill, order);
 
   return sendSuccess(response, {
     statusCode: 201,
@@ -174,45 +225,9 @@ export const updateBillPayment = async (request, response) => {
     throw createError('Paid amount is required', 400);
   }
 
-  const bill = await findBill(request.params.id);
-  const order = await Order.findById(bill.orderId);
-  if (!order) throw createError('Related order not found', 404);
-
-  const paymentType = request.body.paymentType || bill.paymentType;
-  const payment = calculatePayment(bill.finalAmount, request.body.paidAmount, paymentType);
-  const previousBillPayment = {
-    paidAmount: bill.paidAmount,
-    dueAmount: bill.dueAmount,
-    paymentType: bill.paymentType,
-    paymentStatus: bill.paymentStatus,
-  };
-  const previousOrderPayment = {
-    paymentStatus: order.paymentStatus,
-    paymentType: order.paymentType,
-    paymentRecorded: order.paymentRecorded,
-  };
-
-  try {
-    bill.set(payment);
-    order.paymentStatus = payment.paymentStatus;
-    order.paymentType = payment.paymentType;
-    order.paymentRecorded = order.paymentRecorded || payment.paidAmount > 0;
-    await bill.save();
-    await order.save();
-    await syncSaleFromBill(bill);
-  } catch (error) {
-    bill.set(previousBillPayment);
-    order.set(previousOrderPayment);
-    const rollback = await Promise.allSettled([
-      bill.save(),
-      order.save(),
-      syncSaleFromBill({ ...bill.toObject(), ...previousBillPayment }),
-    ]);
-    if (rollback.some((result) => result.status === 'rejected')) {
-      throw createError('Payment update failed and requires manual review', 500);
-    }
-    throw error;
-  }
+  const update = (session) =>
+    executeBillPaymentUpdate(request.params.id, request.body, request.userId, session);
+  const bill = await runInTransaction(update, () => update());
 
   return sendSuccess(response, {
     message: 'Bill payment updated successfully',

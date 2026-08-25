@@ -2,7 +2,7 @@ import { Sale } from '../models/sale.model.js';
 
 const getSaleNo = (billNo) => billNo.replace(/^[^-]+-/, 'SALE-');
 
-export const syncSaleFromBill = (bill) =>
+export const syncSaleFromBill = (bill, { session } = {}) =>
   Sale.findOneAndUpdate(
     { billId: bill._id },
     {
@@ -24,5 +24,11 @@ export const syncSaleFromBill = (bill) =>
         saleNo: getSaleNo(bill.billNo),
       },
     },
-    { returnDocument: 'after', upsert: true, runValidators: true, setDefaultsOnInsert: true },
+    {
+      returnDocument: 'after',
+      upsert: true,
+      runValidators: true,
+      setDefaultsOnInsert: true,
+      session,
+    },
   );

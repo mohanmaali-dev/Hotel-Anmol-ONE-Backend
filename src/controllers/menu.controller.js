@@ -74,6 +74,9 @@ const prepareIngredients = async (ingredients, trackStock) => {
 
   return ingredients.map((ingredient) => {
     const stockItem = stockById.get(String(ingredient.stockItemId));
+    if (!stockItem.isActive) {
+      throw createError(`${stockItem.itemName} is inactive and cannot be used in a recipe`, 400);
+    }
     const conversion = convertIngredientToStockUnit({
       quantity: ingredient.quantityUsed,
       ingredientUnit: ingredient.unit || stockItem.unit,
@@ -110,8 +113,13 @@ export const getCategories = async (request, response) => {
 };
 
 export const createCategory = async (request, response) => {
+  const categoryName = String(request.body.name || '').trim();
+  if (!categoryName) throw createError('Category name is required', 400);
+  if (await MenuCategory.exists({ name: new RegExp(`^${escapeRegex(categoryName)}$`, 'i') })) {
+    throw createError('A menu category with this name already exists', 409);
+  }
   const category = await MenuCategory.create({
-    name: request.body.name,
+    name: categoryName,
     description: request.body.description,
     status: request.body.status,
   });
@@ -124,6 +132,16 @@ export const createCategory = async (request, response) => {
 
 export const updateCategory = async (request, response) => {
   const category = await findCategory(request.params.id);
+  if (request.body.name !== undefined) {
+    const categoryName = String(request.body.name || '').trim();
+    if (!categoryName) throw createError('Category name is required', 400);
+    const duplicate = await MenuCategory.exists({
+      _id: { $ne: category._id },
+      name: new RegExp(`^${escapeRegex(categoryName)}$`, 'i'),
+    });
+    if (duplicate) throw createError('A menu category with this name already exists', 409);
+    request.body.name = categoryName;
+  }
   ['name', 'description', 'status'].forEach((field) => {
     if (request.body[field] !== undefined) category[field] = request.body[field];
   });
@@ -182,11 +200,16 @@ export const getMenuItem = async (request, response) => {
 };
 
 export const createMenuItem = async (request, response) => {
+  const itemName = String(request.body.itemName || '').trim();
+  if (!itemName) throw createError('Item name is required', 400);
+  if (await MenuItem.exists({ itemName: new RegExp(`^${escapeRegex(itemName)}$`, 'i') })) {
+    throw createError('A menu item with this name already exists', 409);
+  }
   const category = await findCategory(request.body.categoryId);
   const trackStock = request.body.trackStock === true;
   const ingredients = await prepareIngredients(request.body.ingredients, trackStock);
   const item = await MenuItem.create({
-    itemName: request.body.itemName,
+    itemName,
     categoryId: category._id,
     sellingPrice: getSellingPrice(request.body.sellingPrice),
     servingSize: getServingSize(request.body.servingSize),
@@ -208,13 +231,28 @@ export const updateMenuItem = async (request, response) => {
   const item = await MenuItem.findById(request.params.id);
   if (!item) throw createError('Menu item not found', 404);
 
+  if (request.body.itemName !== undefined) {
+    const itemName = String(request.body.itemName || '').trim();
+    if (!itemName) throw createError('Item name is required', 400);
+    const duplicate = await MenuItem.exists({
+      _id: { $ne: item._id },
+      itemName: new RegExp(`^${escapeRegex(itemName)}$`, 'i'),
+    });
+    if (duplicate) throw createError('A menu item with this name already exists', 409);
+    request.body.itemName = itemName;
+  }
+
   if (request.body.categoryId !== undefined) {
     const category = await findCategory(request.body.categoryId);
     item.categoryId = category._id;
   }
   const trackStock = request.body.trackStock ?? item.trackStock;
   let ingredients;
-  if (request.body.ingredients !== undefined || (trackStock && !item.trackStock)) {
+  if (
+    request.body.ingredients !== undefined ||
+    (trackStock && !item.trackStock) ||
+    (trackStock && request.body.availability === 'Available')
+  ) {
     ingredients = await prepareIngredients(
       request.body.ingredients ?? item.ingredients,
       trackStock,

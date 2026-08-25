@@ -18,7 +18,11 @@ const request = async (path, { token, expected = 200, ...options } = {}) => {
     },
   });
   const body = await response.json();
-  assert.equal(response.status, expected, `${options.method || 'GET'} ${path}: ${body.message}`);
+  assert.equal(
+    response.status,
+    expected,
+    `${options.method || 'GET'} ${path}: ${body.message}${body.errors?.length ? ` (${body.errors.join(', ')})` : ''}`,
+  );
   return body;
 };
 
@@ -195,7 +199,7 @@ const run = async () => {
   const bill = (await post(`/bills/from-order/${order._id}`, {}, token)).data;
   assert.equal(bill.finalAmount, 395);
   assert.equal(bill.items[0].servingSize, '1 Plate');
-  const existingBill = (await post(`/bills/from-order/${order._id}`, {}, token)).data;
+  const existingBill = (await post(`/bills/from-order/${order._id}`, {}, token, 200)).data;
   assert.equal(existingBill._id, bill._id, 'generating twice must return the existing bill');
   const paidBill = (
     await put(
@@ -209,6 +213,18 @@ const run = async () => {
   ).data;
   assert.equal(paidBill.paymentStatus, 'Partial');
   assert.equal(paidBill.dueAmount, 295);
+  await put(`/bills/${bill._id}/payment`, { paymentType: 'UPI', paidAmount: 50 }, token, 400);
+  const correctedBill = (
+    await put(
+      `/bills/${bill._id}/payment`,
+      { paymentType: 'UPI', paidAmount: 50, reason: 'Smoke correction' },
+      token,
+    )
+  ).data;
+  assert.equal(correctedBill.paidAmount, 50);
+  const billWithHistory = (await request(`/bills/${bill._id}`, { token })).data;
+  assert.equal(billWithHistory.paymentHistory[0].reason, 'Smoke correction');
+  await put(`/bills/${bill._id}/payment`, { paymentType: 'UPI', paidAmount: 100 }, token);
   const sales = await request(`/sales?search=${encodeURIComponent(bill.billNo)}`, { token });
   assert.equal(sales.data.length, 1, 'one bill must create exactly one sale');
   assert.equal(sales.data[0].paidAmount, 100, 'bill payment must sync to sale');
@@ -268,8 +284,18 @@ const run = async () => {
   ]);
   assert.equal(expenseReport.summary.totalExpenses, 250);
   assert.equal(purchaseReport.summary.totalPurchaseAmount, 1185);
-  assert.equal(stockReport.summary.totalStockOut, 44);
+  assert.equal(stockReport.summary.totalStockOut, 3);
+  assert.deepEqual(
+    stockReport.summary.stockOutByUnit.sort((left, right) => left.unit.localeCompare(right.unit)),
+    [
+      { unit: 'ml', quantity: 40 },
+      { unit: 'piece', quantity: 4 },
+    ],
+  );
   assert.equal(salesReport.summary.totalSales, 395);
+  const pagedOrderReport = await request('/reports/orders?page=1&limit=1', { token });
+  assert.equal(pagedOrderReport.data.length, 1);
+  assert.equal(pagedOrderReport.pagination.total, 2);
 
   const inactiveUser = (
     await post(

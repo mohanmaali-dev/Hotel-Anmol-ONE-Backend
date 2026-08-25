@@ -4,6 +4,7 @@ import {
   normalizePermissions,
 } from '../../utils/permissions.js';
 import { assertNoDeletionDependencies } from '../../utils/deletion-dependencies.js';
+import { AuthToken } from '../auth/auth-token.model.js';
 import { User } from './user.model.js';
 
 const createError = (message, statusCode) => {
@@ -152,6 +153,9 @@ export const updateUser = async (id, data, currentUserId) => {
     user.password = data.password;
   }
   await user.save();
+  if (data.password !== undefined || !user.isActive) {
+    await AuthToken.deleteMany({ user: user._id });
+  }
   return serializeUser(user);
 };
 
@@ -162,5 +166,6 @@ export const deleteUser = async (id, currentUserId) => {
   const user = await User.findById(id);
   if (!user) throw createError('User not found', 404);
   await assertNoDeletionDependencies('user', user._id);
+  await AuthToken.deleteMany({ user: user._id });
   await user.deleteOne();
 };

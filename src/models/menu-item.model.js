@@ -22,8 +22,20 @@ const ingredientSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    stockQuantityUsed: { type: Number, min: 0.000001, default: function defaultStockQuantityUsed() { return this.quantityUsed; } },
-    stockUnit: { type: String, trim: true, default: function defaultStockUnit() { return this.unit; } },
+    stockQuantityUsed: {
+      type: Number,
+      min: 0.000001,
+      default: function defaultStockQuantityUsed() {
+        return this.quantityUsed;
+      },
+    },
+    stockUnit: {
+      type: String,
+      trim: true,
+      default: function defaultStockUnit() {
+        return this.unit;
+      },
+    },
     conversionFactor: { type: Number, required: true, min: 0.000001, default: 1 },
   },
   { _id: false },
@@ -37,6 +49,7 @@ const menuItemSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
+    itemNameKey: { type: String, unique: true, sparse: true, select: false },
     categoryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'MenuCategory',
@@ -91,5 +104,9 @@ const menuItemSchema = new mongoose.Schema(
   },
   { timestamps: true, versionKey: false },
 );
+
+menuItemSchema.pre('validate', function setItemNameKey() {
+  this.itemNameKey = this.itemName?.trim().toLocaleLowerCase('en-IN');
+});
 
 export const MenuItem = mongoose.model('MenuItem', menuItemSchema);

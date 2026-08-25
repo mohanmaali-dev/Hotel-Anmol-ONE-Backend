@@ -72,12 +72,6 @@ const orderSchema = new mongoose.Schema(
       type: String,
       enum: ['Cash', 'UPI', 'Card', null],
       default: null,
-      validate: {
-        validator(value) {
-          return this.paymentStatus === 'Not Paid' || Boolean(value);
-        },
-        message: 'Payment type is required for a paid order',
-      },
     },
     paymentStatus: {
       type: String,
@@ -114,5 +108,11 @@ const orderSchema = new mongoose.Schema(
   },
   { timestamps: true, versionKey: false },
 );
+
+orderSchema.pre('validate', function validatePaymentType() {
+  if (this.paymentStatus !== 'Not Paid' && !this.paymentType) {
+    this.invalidate('paymentType', 'Payment type is required for a paid order');
+  }
+});
 
 export const Order = mongoose.model('Order', orderSchema);

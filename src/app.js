@@ -22,6 +22,7 @@ import { orderRouter } from './routes/order.routes.js';
 import { purchaseRouter } from './routes/purchase.routes.js';
 import { reportRouter } from './routes/report.routes.js';
 import { saleRouter } from './routes/sale.routes.js';
+import { searchRouter } from './routes/search.routes.js';
 import { settingRouter } from './routes/setting.routes.js';
 import { stockRouter } from './routes/stock.routes.js';
 import { supplierRouter } from './routes/supplier.routes.js';
@@ -29,6 +30,8 @@ import { supplierRouter } from './routes/supplier.routes.js';
 validateEnvironment();
 
 const app = express();
+
+if (env.trustProxy) app.set('trust proxy', env.trustProxy);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors(corsOptions));
@@ -52,6 +55,7 @@ app.use('/api/menu', menuRouter);
 app.use('/api/orders', orderRouter);
 app.use('/api/bills', billRouter);
 app.use('/api/sales', saleRouter);
+app.use('/api/search', searchRouter);
 app.use('/api/settings', settingRouter);
 app.use('/api/purchases', purchaseRouter);
 app.use('/api/reports', reportRouter);

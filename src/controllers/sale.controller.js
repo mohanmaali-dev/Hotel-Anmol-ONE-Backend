@@ -41,6 +41,7 @@ export const getSales = async (request, response) => {
 
   const [sales, total] = await Promise.all([
     Sale.find(filters)
+      .populate('biller', 'name username')
       .sort({ date: -1, createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -59,7 +60,7 @@ export const getSale = async (request, response) => {
   const query = mongoose.isValidObjectId(request.params.id)
     ? { _id: request.params.id }
     : { saleNo: request.params.id.trim().toUpperCase() };
-  const sale = await Sale.findOne(query);
+  const sale = await Sale.findOne(query).populate('biller', 'name username');
   if (!sale) throw createError('Sale not found', 404);
   return sendSuccess(response, { message: 'Sale fetched successfully', data: sale });
 };
