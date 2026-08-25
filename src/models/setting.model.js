@@ -9,7 +9,7 @@ const settingSchema = new mongoose.Schema(
       immutable: true,
     },
     restaurant: {
-      name: { type: String, trim: true, default: 'Restaurant' },
+      name: { type: String, trim: true, default: 'Hotel Anmol One' },
       phone: {
         type: String,
         trim: true,

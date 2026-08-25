@@ -5,6 +5,14 @@ import { logger } from './logger.js';
 
 let connectionPromise;
 
+export const applyRetryWritesSetting = (mongoUri, retryWrites) => {
+  const value = String(Boolean(retryWrites));
+  if (/([?&])retryWrites=/i.test(mongoUri)) {
+    return mongoUri.replace(/([?&])retryWrites=[^&]*/gi, `$1retryWrites=${value}`);
+  }
+  return `${mongoUri}${mongoUri.includes('?') ? '&' : '?'}retryWrites=${value}`;
+};
+
 mongoose.connection.on('disconnected', () => {
   connectionPromise = undefined;
 });
@@ -16,8 +24,10 @@ export const connectDatabase = async () => {
   if (mongoose.connection.readyState === 1) return mongoose.connection;
   if (connectionPromise) return connectionPromise;
 
+  const mongoUri = applyRetryWritesSetting(env.mongoUri, env.mongoRetryWrites);
+
   connectionPromise = mongoose
-    .connect(env.mongoUri, {
+    .connect(mongoUri, {
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 10000,
       // Some Mongo-compatible production providers do not implement retryable writes.

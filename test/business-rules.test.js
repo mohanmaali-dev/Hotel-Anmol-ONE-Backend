@@ -5,6 +5,7 @@ import {
   calculateRequiredIngredients,
   combineRequiredIngredients,
 } from '../src/utils/menu-stock.js';
+import { applyRetryWritesSetting } from '../src/config/database.js';
 import { buildDateFilter } from '../src/utils/date-range.js';
 import { calculateOrderTotals } from '../src/utils/order-calculations.js';
 import { calculatePayment } from '../src/utils/payment-calculations.js';
@@ -13,6 +14,17 @@ import { getStockStatus, toPositiveQuantity } from '../src/utils/stock-calculati
 import { convertIngredientToStockUnit } from '../src/utils/unit-conversion.js';
 
 const objectId = '507f1f77bcf86cd799439011';
+
+test('MongoDB retry writes setting overrides the connection string', () => {
+  assert.equal(
+    applyRetryWritesSetting('mongodb://server/restaurant?retryWrites=true&w=majority', false),
+    'mongodb://server/restaurant?retryWrites=false&w=majority',
+  );
+  assert.equal(
+    applyRetryWritesSetting('mongodb://server/restaurant', false),
+    'mongodb://server/restaurant?retryWrites=false',
+  );
+});
 
 test('order totals are calculated from quantity and rate', () => {
   const totals = calculateOrderTotals(
