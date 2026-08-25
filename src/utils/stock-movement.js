@@ -92,7 +92,9 @@ export const applyStockMovement = async ({
     status: statusExpression(quantityExpression),
     updatedAt: new Date(),
   };
-  if (type === 'IN' && purchasePrice !== undefined) fields.purchasePrice = purchasePrice;
+  if (type === 'IN' && purchasePrice !== undefined) {
+    fields.purchasePrice = purchasePrice;
+  }
   if (type === 'IN' && supplierId) fields.supplierId = supplierId;
 
   const itemQuery = { _id: itemBefore._id };
@@ -106,7 +108,7 @@ export const applyStockMovement = async ({
     const exists = await StockItem.exists({ _id: itemBefore._id });
     if (!exists) throw createError('Stock item not found', 404);
     throw createError(
-      `Insufficient stock. Available quantity is ${itemBefore.currentQuantity}`,
+      `Insufficient stock. Available quantity is ${itemBefore.currentQuantity} ${itemBefore.unit}`,
       400,
     );
   }

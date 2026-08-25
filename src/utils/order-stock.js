@@ -17,6 +17,7 @@ const createInsufficientStockError = (availability) => {
       item: ingredient.stockItemName,
       required: ingredient.requiredQuantity,
       available: ingredient.currentQuantity,
+      unit: ingredient.unit,
     }));
   return error;
 };

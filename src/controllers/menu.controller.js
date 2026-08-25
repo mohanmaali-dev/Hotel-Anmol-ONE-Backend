@@ -7,6 +7,7 @@ import { sendSuccess } from '../utils/api-response.js';
 import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
 import { roundMoney } from '../utils/money.js';
 import { toNonNegativeStockNumber, toPositiveQuantity } from '../utils/stock-calculations.js';
+import { convertIngredientToStockUnit } from '../utils/unit-conversion.js';
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -73,11 +74,19 @@ const prepareIngredients = async (ingredients, trackStock) => {
 
   return ingredients.map((ingredient) => {
     const stockItem = stockById.get(String(ingredient.stockItemId));
+    const conversion = convertIngredientToStockUnit({
+      quantity: ingredient.quantityUsed,
+      ingredientUnit: ingredient.unit || stockItem.unit,
+      stockUnit: stockItem.unit,
+    });
     return {
       stockItemId: stockItem._id,
       stockItemName: stockItem.itemName,
       quantityUsed: toPositiveQuantity(ingredient.quantityUsed),
-      unit: stockItem.unit,
+      unit: conversion.unit,
+      stockQuantityUsed: conversion.stockQuantityUsed,
+      stockUnit: conversion.stockUnit,
+      conversionFactor: conversion.conversionFactor,
     };
   });
 };

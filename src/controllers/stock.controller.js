@@ -262,7 +262,7 @@ export const updateStockItem = async (request, response) => {
     const category = await getStockCategoryForItem(request.body.category);
     item.category = category.name;
   }
-  const editableFields = ['itemName', 'unit', 'supplierId'];
+  const editableFields = ['itemName', 'supplierId'];
   editableFields.forEach((field) => {
     if (request.body[field] !== undefined) item[field] = request.body[field] || null;
   });
@@ -357,7 +357,7 @@ export const getStockHistory = async (request, response) => {
   const dateFilter = buildDateFilter(request.query.fromDate, request.query.toDate);
   if (dateFilter) filters.date = dateFilter;
 
-  const [history, total] = await Promise.all([
+  const [historyRows, total] = await Promise.all([
     StockHistory.find(filters)
       .populate({ path: 'supplierId', select: 'name', model: Supplier })
       .populate({ path: 'user', select: 'name', model: User })
@@ -367,6 +367,15 @@ export const getStockHistory = async (request, response) => {
       .lean(),
     StockHistory.countDocuments(filters),
   ]);
+  const historyItemIds = [...new Set(historyRows.map((row) => String(row.stockItemId)))];
+  const unitItems = historyItemIds.length
+    ? await StockItem.find({ _id: { $in: historyItemIds } }).select('unit').lean()
+    : [];
+  const unitsByItem = new Map(unitItems.map((item) => [String(item._id), item.unit]));
+  const history = historyRows.map((row) => ({
+    ...row,
+    unit: unitsByItem.get(String(row.stockItemId)) || '',
+  }));
 
   return sendSuccess(response, {
     message: 'Stock history fetched successfully',
