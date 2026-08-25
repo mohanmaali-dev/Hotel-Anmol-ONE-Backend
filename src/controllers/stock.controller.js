@@ -1,11 +1,15 @@
 import mongoose from 'mongoose';
 
+import { User } from '../modules/users/user.model.js';
 import { MenuItem } from '../models/menu-item.model.js';
 import { Purchase } from '../models/purchase.model.js';
 import { StockCategory } from '../models/stock-category.model.js';
 import { StockHistory } from '../models/stock-history.model.js';
 import { StockItem } from '../models/stock-item.model.js';
+import { Supplier } from '../models/supplier.model.js';
 import { sendSuccess } from '../utils/api-response.js';
+import { buildDateFilter } from '../utils/date-range.js';
+import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
 import { toNonNegativeStockNumber } from '../utils/stock-calculations.js';
 import { applyStockMovement } from '../utils/stock-movement.js';
 
@@ -76,13 +80,6 @@ const getPagination = (query) => {
   const page = Math.max(Math.floor(Number(query.page)) || 1, 1);
   const limit = Math.min(Math.max(Math.floor(Number(query.limit)) || 20, 1), 100);
   return { page, limit };
-};
-
-const buildDateFilter = (fromDate, toDate) => {
-  const date = {};
-  if (fromDate) date.$gte = new Date(`${fromDate}T00:00:00.000Z`);
-  if (toDate) date.$lte = new Date(`${toDate}T23:59:59.999Z`);
-  return Object.keys(date).length ? date : undefined;
 };
 
 const findStockItem = async (id) => {
@@ -158,9 +155,7 @@ export const updateStockCategory = async (request, response) => {
 
 export const deleteStockCategory = async (request, response) => {
   const category = await findStockCategory(request.params.id);
-  if (await StockItem.exists({ category: exactNameRegex(category.name) })) {
-    throw createError('This category is being used by stock items. Disable it instead.', 400);
-  }
+  await assertNoDeletionDependencies('stock-category', category._id);
   await category.deleteOne();
   return sendSuccess(response, {
     message: 'Stock category deleted successfully',
@@ -249,6 +244,17 @@ export const updateStockItem = async (request, response) => {
   }
 
   const item = await findStockItem(request.params.id);
+  const previousItemName = item.itemName;
+  if (request.body.unit !== undefined && request.body.unit !== item.unit) {
+    const [usedInRecipe, usedInPurchase, hasHistory] = await Promise.all([
+      MenuItem.exists({ 'ingredients.stockItemId': item._id }),
+      Purchase.exists({ 'items.stockItemId': item._id }),
+      StockHistory.exists({ stockItemId: item._id }),
+    ]);
+    if (usedInRecipe || usedInPurchase || hasHistory || item.currentQuantity > 0) {
+      throw createError('The unit cannot be changed after this stock item has been used', 400);
+    }
+  }
   if (
     request.body.category !== undefined &&
     categoryNameKey(request.body.category) !== categoryNameKey(item.category)
@@ -268,30 +274,34 @@ export const updateStockItem = async (request, response) => {
   }
   await item.save();
 
+  if (item.itemName !== previousItemName) {
+    try {
+      await MenuItem.updateMany(
+        { 'ingredients.stockItemId': item._id },
+        { $set: { 'ingredients.$[ingredient].stockItemName': item.itemName } },
+        { arrayFilters: [{ 'ingredient.stockItemId': item._id }] },
+      );
+    } catch (error) {
+      item.itemName = previousItemName;
+      await item.save();
+      throw error;
+    }
+  }
+
   return sendSuccess(response, { message: 'Stock item updated successfully', data: item });
 };
 
 export const deleteStockItem = async (request, response) => {
   const item = await findStockItem(request.params.id);
-  if (item.currentQuantity > 0) {
-    throw createError('Stock item must have zero quantity before it can be deleted', 400);
-  }
-  const [usedInRecipe, usedInPurchase, hasHistory] = await Promise.all([
-    MenuItem.exists({ 'ingredients.stockItemId': item._id }),
-    Purchase.exists({ 'items.stockItemId': item._id }),
-    StockHistory.exists({ stockItemId: item._id }),
-  ]);
-  if (usedInRecipe) {
-    throw createError('Stock item is used in a menu recipe and cannot be deleted', 400);
-  }
-  if (usedInPurchase || hasHistory) {
-    throw createError('Stock item has purchase or movement history and cannot be deleted', 400);
-  }
+  await assertNoDeletionDependencies('stock-item', item._id);
   await item.deleteOne();
   return sendSuccess(response, { message: 'Stock item deleted successfully', data: item });
 };
 
 export const stockIn = async (request, response) => {
+  if (request.body.purchaseId) {
+    throw createError('Receive the purchase from the Purchases page to update stock', 400);
+  }
   const result = await applyStockMovement({
     stockItemId: request.body.stockItemId,
     type: 'IN',
@@ -349,6 +359,8 @@ export const getStockHistory = async (request, response) => {
 
   const [history, total] = await Promise.all([
     StockHistory.find(filters)
+      .populate({ path: 'supplierId', select: 'name', model: Supplier })
+      .populate({ path: 'user', select: 'name', model: User })
       .sort({ date: -1, createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)

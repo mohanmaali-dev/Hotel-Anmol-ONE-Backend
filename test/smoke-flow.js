@@ -156,6 +156,7 @@ const run = async () => {
         itemName: 'Smoke Burger',
         categoryId: category._id,
         sellingPrice: 200,
+        servingSize: '1 Plate',
         availability: 'Available',
         trackStock: true,
         ingredients: [
@@ -186,13 +187,16 @@ const run = async () => {
     )
   ).data;
   assert.equal(order.items[0].itemName, 'Smoke Burger');
+  assert.equal(order.items[0].servingSize, '1 Plate');
   assert.equal(order.items[0].rate, 200, 'backend must use the menu selling price');
   assert.equal(order.subtotal, 400);
   assert.equal(order.finalAmount, 395);
 
   const bill = (await post(`/bills/from-order/${order._id}`, {}, token)).data;
   assert.equal(bill.finalAmount, 395);
-  await post(`/bills/from-order/${order._id}`, {}, token, 409);
+  assert.equal(bill.items[0].servingSize, '1 Plate');
+  const existingBill = (await post(`/bills/from-order/${order._id}`, {}, token)).data;
+  assert.equal(existingBill._id, bill._id, 'generating twice must return the existing bill');
   const paidBill = (
     await put(
       `/bills/${bill._id}/payment`,

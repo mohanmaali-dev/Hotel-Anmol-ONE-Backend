@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { Purchase } from '../models/purchase.model.js';
 import { Supplier } from '../models/supplier.model.js';
 import { sendSuccess } from '../utils/api-response.js';
+import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -175,13 +176,7 @@ export const updateSupplier = async (request, response) => {
 
 export const deleteSupplier = async (request, response) => {
   const supplier = await findSupplier(request.params.id);
-  const purchaseCount = await Purchase.countDocuments({ supplierId: supplier._id });
-  if (purchaseCount > 0) {
-    throw createError(
-      'Supplier has purchase history and cannot be deleted. Mark the supplier Inactive instead',
-      400,
-    );
-  }
+  await assertNoDeletionDependencies('supplier', supplier._id);
   await supplier.deleteOne();
   return sendSuccess(response, {
     message: 'Supplier deleted successfully',

@@ -6,6 +6,8 @@ import { Bill } from '../models/bill.model.js';
 import { MenuItem } from '../models/menu-item.model.js';
 import { Order } from '../models/order.model.js';
 import { sendSuccess } from '../utils/api-response.js';
+import { buildDateFilter } from '../utils/date-range.js';
+import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
 import { calculateOrderTotals } from '../utils/order-calculations.js';
 import { completeOrderWithStock } from '../utils/order-stock.js';
 
@@ -39,13 +41,6 @@ const getPagination = (query) => {
   return { page, limit };
 };
 
-const buildDateFilter = (fromDate, toDate) => {
-  const date = {};
-  if (fromDate) date.$gte = new Date(`${fromDate}T00:00:00.000Z`);
-  if (toDate) date.$lte = new Date(`${toDate}T23:59:59.999Z`);
-  return Object.keys(date).length ? date : undefined;
-};
-
 const getServerPricedItems = async (items) => {
   if (!Array.isArray(items) || items.length === 0) return items;
   const ids = items.map((item, index) => {
@@ -69,6 +64,15 @@ const getServerPricedItems = async (items) => {
       itemName: menuItem.itemName,
       quantity: item.quantity,
       rate: menuItem.sellingPrice,
+      servingSize: menuItem.servingSize,
+      recipeCaptured: true,
+      trackStock: menuItem.trackStock,
+      ingredients: menuItem.ingredients.map((ingredient) => ({
+        stockItemId: ingredient.stockItemId,
+        stockItemName: ingredient.stockItemName,
+        quantityUsed: ingredient.quantityUsed,
+        unit: ingredient.unit,
+      })),
     };
   });
 };
@@ -117,8 +121,12 @@ export const getOrder = async (request, response) => {
 
 export const createOrder = async (request, response) => {
   const orderStatus = request.body.orderStatus || 'Pending';
+  const paymentStatus = request.body.paymentStatus || 'Not Paid';
   if (orderStatus === 'Completed') {
     throw createError('Create the order first, then mark it as Completed to deduct stock', 400);
+  }
+  if (paymentStatus !== 'Not Paid' && !request.body.paymentType) {
+    throw createError('Payment type is required for a paid order', 400);
   }
   const pricedItems = await getServerPricedItems(request.body.items);
   const totals = calculateOrderTotals(
@@ -134,8 +142,9 @@ export const createOrder = async (request, response) => {
     areaRoomNo: request.body.areaRoomNo,
     customerName: request.body.customerName,
     biller: request.userId,
-    paymentType: request.body.paymentType,
-    paymentStatus: request.body.paymentStatus,
+    paymentType: paymentStatus === 'Not Paid' ? null : request.body.paymentType,
+    paymentStatus,
+    paymentRecorded: paymentStatus !== 'Not Paid',
     orderStatus,
     cancelledAt: orderStatus === 'Cancelled' ? new Date() : null,
     stockDeducted: false,
@@ -163,6 +172,21 @@ export const updateOrder = async (request, response) => {
   }
   if (order.stockDeducted && order.orderStatus !== 'Completed') {
     throw createError('Order stock has already been deducted and requires manual review', 409);
+  }
+  if (hasNonStatusChanges || nextStatus === 'Cancelled') {
+    const hasBill = await Bill.exists({ orderId: order._id });
+    if (hasBill && nextStatus === 'Cancelled') {
+      throw createError('This order has a bill and cannot be cancelled', 400);
+    }
+    if (hasBill && hasNonStatusChanges) {
+      throw createError('This order has a bill. Update its payment from Billing.', 400);
+    }
+  }
+  if (
+    nextStatus === 'Cancelled' &&
+    (order.paymentRecorded || order.paymentStatus !== 'Not Paid')
+  ) {
+    throw createError('A paid order cannot be cancelled without a payment reversal', 400);
   }
   if (order.orderStatus === 'Completed') {
     if (nextStatus !== 'Completed') {
@@ -199,6 +223,11 @@ export const updateOrder = async (request, response) => {
     request.body.discount ?? order.discount,
     request.body.additionalCharges ?? order.additionalCharges,
   );
+  const paymentStatus = request.body.paymentStatus ?? order.paymentStatus;
+  const paymentType = request.body.paymentType ?? order.paymentType;
+  if (paymentStatus !== 'Not Paid' && !paymentType) {
+    throw createError('Payment type is required for a paid order', 400);
+  }
   const editableFields = [
     'date',
     'orderType',
@@ -212,6 +241,8 @@ export const updateOrder = async (request, response) => {
   editableFields.forEach((field) => {
     if (request.body[field] !== undefined) updates[field] = request.body[field];
   });
+  if (paymentStatus === 'Not Paid') updates.paymentType = null;
+  updates.paymentRecorded = order.paymentRecorded || paymentStatus !== 'Not Paid';
   updates.orderStatus = nextStatus === 'Completed' ? order.orderStatus : nextStatus;
   if (nextStatus === 'Cancelled') updates.cancelledAt = new Date();
 
@@ -243,12 +274,7 @@ export const updateOrder = async (request, response) => {
 
 export const deleteOrder = async (request, response) => {
   const order = await findOrder(request.params.id);
-  if (order.orderStatus === 'Completed' || order.stockDeducted) {
-    throw createError('Completed orders cannot be deleted without a stock reversal', 400);
-  }
-  if (await Bill.exists({ orderId: order._id })) {
-    throw createError('Orders with a generated bill cannot be deleted', 400);
-  }
+  await assertNoDeletionDependencies('order', order._id);
   const result = await Order.deleteOne({
     _id: order._id,
     stockDeducted: { $ne: true },

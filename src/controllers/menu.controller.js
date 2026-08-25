@@ -2,9 +2,10 @@ import mongoose from 'mongoose';
 
 import { MenuCategory } from '../models/menu-category.model.js';
 import { MenuItem } from '../models/menu-item.model.js';
-import { Order } from '../models/order.model.js';
 import { StockItem } from '../models/stock-item.model.js';
 import { sendSuccess } from '../utils/api-response.js';
+import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
+import { roundMoney } from '../utils/money.js';
 import { toNonNegativeStockNumber, toPositiveQuantity } from '../utils/stock-calculations.js';
 
 const createError = (message, statusCode) => {
@@ -25,7 +26,13 @@ const getSellingPrice = (value) => {
   if (value === undefined || value === null || value === '') {
     throw createError('Selling price is required', 400);
   }
-  return toNonNegativeStockNumber(value, 'Selling price');
+  return roundMoney(toNonNegativeStockNumber(value, 'Selling price'));
+};
+
+const getServingSize = (value) => {
+  const servingSize = String(value || '').trim();
+  if (servingSize.length > 80) throw createError('Serving size cannot exceed 80 characters', 400);
+  return servingSize;
 };
 
 const findCategory = async (id) => {
@@ -76,12 +83,20 @@ const prepareIngredients = async (ingredients, trackStock) => {
 };
 
 export const getCategories = async (request, response) => {
+  const { page, limit } = getPagination(request.query);
   const filters = {};
   if (request.query.status) filters.status = request.query.status;
-  const categories = await MenuCategory.find(filters).sort({ name: 1 });
+  const [categories, total] = await Promise.all([
+    MenuCategory.find(filters)
+      .sort({ name: 1 })
+      .skip((page - 1) * limit)
+      .limit(limit),
+    MenuCategory.countDocuments(filters),
+  ]);
   return sendSuccess(response, {
     message: 'Menu categories fetched successfully',
     data: categories,
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
 };
 
@@ -112,9 +127,7 @@ export const updateCategory = async (request, response) => {
 
 export const deleteCategory = async (request, response) => {
   const category = await findCategory(request.params.id);
-  if (await MenuItem.exists({ categoryId: category._id })) {
-    throw createError('Category cannot be deleted while it contains menu items', 400);
-  }
+  await assertNoDeletionDependencies('menu-category', category._id);
   await category.deleteOne();
   return sendSuccess(response, {
     message: 'Menu category deleted successfully',
@@ -167,6 +180,7 @@ export const createMenuItem = async (request, response) => {
     itemName: request.body.itemName,
     categoryId: category._id,
     sellingPrice: getSellingPrice(request.body.sellingPrice),
+    servingSize: getServingSize(request.body.servingSize),
     description: request.body.description,
     availability: request.body.availability,
     trackStock,
@@ -200,6 +214,9 @@ export const updateMenuItem = async (request, response) => {
   ['itemName', 'description', 'availability'].forEach((field) => {
     if (request.body[field] !== undefined) item[field] = request.body[field];
   });
+  if (request.body.servingSize !== undefined) {
+    item.servingSize = getServingSize(request.body.servingSize);
+  }
   if (request.body.sellingPrice !== undefined) {
     item.sellingPrice = getSellingPrice(request.body.sellingPrice);
   }
@@ -213,14 +230,7 @@ export const updateMenuItem = async (request, response) => {
 
 export const deleteMenuItem = async (request, response) => {
   const item = await findMenuItem(request.params.id);
-  if (
-    await Order.exists({
-      'items.menuItemId': item._id,
-      orderStatus: { $nin: ['Completed', 'Cancelled'] },
-    })
-  ) {
-    throw createError('Menu item is used in an open order and cannot be deleted', 400);
-  }
+  await assertNoDeletionDependencies('menu-item', item._id);
   await item.deleteOne();
   return sendSuccess(response, { message: 'Menu item deleted successfully', data: item });
 };

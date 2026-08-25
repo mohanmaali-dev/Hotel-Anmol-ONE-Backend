@@ -40,6 +40,7 @@ Open `Backend-Scaffold/.env.production` and enter the production values:
 
 ```env
 NODE_ENV=production
+APP_TIMEZONE=Asia/Kolkata
 PORT=5000
 MONGODB_URI=your-real-mongodb-connection-string
 FRONTEND_URL=https://your-frontend-domain.com

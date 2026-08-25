@@ -70,13 +70,23 @@ const orderSchema = new mongoose.Schema(
     },
     paymentType: {
       type: String,
-      enum: ['Cash', 'UPI', 'Card'],
-      required: true,
+      enum: ['Cash', 'UPI', 'Card', null],
+      default: null,
+      validate: {
+        validator(value) {
+          return this.paymentStatus === 'Not Paid' || Boolean(value);
+        },
+        message: 'Payment type is required for a paid order',
+      },
     },
     paymentStatus: {
       type: String,
       enum: ['Paid', 'Partial', 'Not Paid'],
       default: 'Not Paid',
+    },
+    paymentRecorded: {
+      type: Boolean,
+      default: false,
     },
     orderStatus: {
       type: String,

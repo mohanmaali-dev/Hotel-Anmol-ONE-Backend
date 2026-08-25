@@ -1,5 +1,5 @@
 import { StockItem } from '../models/stock-item.model.js';
-import { toPositiveQuantity } from './stock-calculations.js';
+import { roundStockQuantity, toPositiveQuantity } from './stock-calculations.js';
 
 export const calculateRequiredIngredients = (menuItem, orderedQuantity = 1) => {
   const quantity = toPositiveQuantity(orderedQuantity);
@@ -10,7 +10,7 @@ export const calculateRequiredIngredients = (menuItem, orderedQuantity = 1) => {
     stockItemName: ingredient.stockItemName,
     unit: ingredient.unit,
     quantityPerItem: ingredient.quantityUsed,
-    requiredQuantity: ingredient.quantityUsed * quantity,
+    requiredQuantity: roundStockQuantity(ingredient.quantityUsed * quantity),
   }));
 };
 
@@ -21,7 +21,11 @@ export const combineRequiredIngredients = (menuItemQuantities) => {
     calculateRequiredIngredients(menuItem, quantity).forEach((ingredient) => {
       const key = String(ingredient.stockItemId);
       const current = combined.get(key);
-      if (current) current.requiredQuantity += ingredient.requiredQuantity;
+      if (current) {
+        current.requiredQuantity = roundStockQuantity(
+          current.requiredQuantity + ingredient.requiredQuantity,
+        );
+      }
       else {
         combined.set(key, {
           stockItemId: ingredient.stockItemId,

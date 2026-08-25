@@ -3,6 +3,7 @@ import {
   getEffectivePermissions,
   normalizePermissions,
 } from '../../utils/permissions.js';
+import { assertNoDeletionDependencies } from '../../utils/deletion-dependencies.js';
 import { User } from './user.model.js';
 
 const createError = (message, statusCode) => {
@@ -158,6 +159,8 @@ export const deleteUser = async (id, currentUserId) => {
   if (String(id) === String(currentUserId)) {
     throw createError('You cannot delete your own user account', 400);
   }
-  const user = await User.findByIdAndDelete(id);
+  const user = await User.findById(id);
   if (!user) throw createError('User not found', 404);
+  await assertNoDeletionDependencies('user', user._id);
+  await user.deleteOne();
 };

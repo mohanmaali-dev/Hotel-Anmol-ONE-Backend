@@ -7,6 +7,7 @@ import { Order } from '../models/order.model.js';
 import { Sale } from '../models/sale.model.js';
 import { Setting } from '../models/setting.model.js';
 import { sendSuccess } from '../utils/api-response.js';
+import { buildDateFilter } from '../utils/date-range.js';
 import { calculatePayment } from '../utils/payment-calculations.js';
 import { syncSaleFromBill } from '../utils/sale-sync.js';
 
@@ -38,13 +39,6 @@ const getPagination = (query) => {
   const page = Math.max(Math.floor(Number(query.page)) || 1, 1);
   const limit = Math.min(Math.max(Math.floor(Number(query.limit)) || 20, 1), 100);
   return { page, limit };
-};
-
-const buildDateFilter = (fromDate, toDate) => {
-  const date = {};
-  if (fromDate) date.$gte = new Date(`${fromDate}T00:00:00.000Z`);
-  if (toDate) date.$lte = new Date(`${toDate}T23:59:59.999Z`);
-  return Object.keys(date).length ? date : undefined;
 };
 
 const findOrder = async (id) => {
@@ -103,7 +97,12 @@ export const createBillFromOrder = async (request, response) => {
     throw createError('A bill cannot be generated for a cancelled order', 400);
   }
   const existingBill = await Bill.findOne({ orderId: order._id });
-  if (existingBill) throw createError('A bill already exists for this order', 409);
+  if (existingBill) {
+    return sendSuccess(response, {
+      message: 'Bill already generated. Opening the existing bill.',
+      data: existingBill,
+    });
+  }
 
   if (request.body.paidAmount === undefined && order.paymentStatus === 'Partial') {
     throw createError('Paid amount is required for a partially paid order', 400);
@@ -113,32 +112,50 @@ export const createBillFromOrder = async (request, response) => {
     request.body.paidAmount ?? (order.paymentStatus === 'Paid' ? order.finalAmount : 0);
   const paymentType = request.body.paymentType || order.paymentType;
   const payment = calculatePayment(order.finalAmount, paidAmount, paymentType);
-  const bill = await Bill.create({
-    billNo: await generateBillNo(),
-    orderId: order._id,
-    orderNo: order.orderNo,
-    date: new Date(),
-    customerName: order.customerName,
-    orderType: order.orderType,
-    items: order.items.map((item) => ({
-      menuItemId: item.menuItemId,
-      itemName: item.itemName,
-      quantity: item.quantity,
-      rate: item.rate,
-      amount: item.amount,
-    })),
-    subtotal: order.subtotal,
-    discount: order.discount,
-    additionalCharges: order.additionalCharges,
-    finalAmount: order.finalAmount,
-    biller: order.biller,
-    ...payment,
-  });
+  let bill;
+  try {
+    bill = await Bill.create({
+      billNo: await generateBillNo(),
+      orderId: order._id,
+      orderNo: order.orderNo,
+      date: new Date(),
+      customerName: order.customerName,
+      orderType: order.orderType,
+      items: order.items.map((item) => ({
+        menuItemId: item.menuItemId,
+        itemName: item.itemName,
+        quantity: item.quantity,
+        rate: item.rate,
+        amount: item.amount,
+        servingSize: item.servingSize,
+      })),
+      subtotal: order.subtotal,
+      discount: order.discount,
+      additionalCharges: order.additionalCharges,
+      finalAmount: order.finalAmount,
+      biller: order.biller,
+      ...payment,
+    });
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+    const duplicateBill = await Bill.findOne({ orderId: order._id });
+    if (!duplicateBill) throw error;
+    await syncSaleFromBill(duplicateBill);
+    order.paymentStatus = duplicateBill.paymentStatus;
+    order.paymentType = duplicateBill.paymentType;
+    order.paymentRecorded = order.paymentRecorded || duplicateBill.paidAmount > 0;
+    await order.save();
+    return sendSuccess(response, {
+      message: 'Bill already generated. Opening the existing bill.',
+      data: duplicateBill,
+    });
+  }
 
   try {
     await syncSaleFromBill(bill);
     order.paymentStatus = bill.paymentStatus;
-    order.paymentType = bill.paymentType || order.paymentType;
+    order.paymentType = bill.paymentType;
+    order.paymentRecorded = order.paymentRecorded || bill.paidAmount > 0;
     await order.save();
   } catch (error) {
     await Promise.allSettled([Sale.deleteOne({ billId: bill._id }), bill.deleteOne()]);
@@ -172,12 +189,14 @@ export const updateBillPayment = async (request, response) => {
   const previousOrderPayment = {
     paymentStatus: order.paymentStatus,
     paymentType: order.paymentType,
+    paymentRecorded: order.paymentRecorded,
   };
 
   try {
     bill.set(payment);
     order.paymentStatus = payment.paymentStatus;
-    order.paymentType = payment.paymentType || order.paymentType;
+    order.paymentType = payment.paymentType;
+    order.paymentRecorded = order.paymentRecorded || payment.paidAmount > 0;
     await bill.save();
     await order.save();
     await syncSaleFromBill(bill);

@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 import { Sale } from '../models/sale.model.js';
 import { sendSuccess } from '../utils/api-response.js';
+import { buildDateFilter, getCurrentDayRange } from '../utils/date-range.js';
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -15,13 +16,6 @@ const getPagination = (query) => {
   const page = Math.max(Math.floor(Number(query.page)) || 1, 1);
   const limit = Math.min(Math.max(Math.floor(Number(query.limit)) || 20, 1), 100);
   return { page, limit };
-};
-
-const buildDateFilter = (fromDate, toDate) => {
-  const date = {};
-  if (fromDate) date.$gte = new Date(`${fromDate}T00:00:00.000Z`);
-  if (toDate) date.$lte = new Date(`${toDate}T23:59:59.999Z`);
-  return Object.keys(date).length ? date : undefined;
 };
 
 export const getSales = async (request, response) => {
@@ -71,13 +65,10 @@ export const getSale = async (request, response) => {
 };
 
 export const getSalesSummary = async (_request, response) => {
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const endOfToday = new Date();
-  endOfToday.setHours(23, 59, 59, 999);
+  const today = getCurrentDayRange();
 
   const [summary] = await Sale.aggregate([
-    { $match: { date: { $gte: startOfToday, $lte: endOfToday } } },
+    { $match: { date: { $gte: today.start, $lt: today.end } } },
     {
       $group: {
         _id: null,
@@ -85,13 +76,13 @@ export const getSalesSummary = async (_request, response) => {
         paidAmount: { $sum: '$paidAmount' },
         dueAmount: { $sum: '$dueAmount' },
         cashSales: {
-          $sum: { $cond: [{ $eq: ['$paymentType', 'Cash'] }, '$finalAmount', 0] },
+          $sum: { $cond: [{ $eq: ['$paymentType', 'Cash'] }, '$paidAmount', 0] },
         },
         upiSales: {
-          $sum: { $cond: [{ $eq: ['$paymentType', 'UPI'] }, '$finalAmount', 0] },
+          $sum: { $cond: [{ $eq: ['$paymentType', 'UPI'] }, '$paidAmount', 0] },
         },
         cardSales: {
-          $sum: { $cond: [{ $eq: ['$paymentType', 'Card'] }, '$finalAmount', 0] },
+          $sum: { $cond: [{ $eq: ['$paymentType', 'Card'] }, '$paidAmount', 0] },
         },
         totalOrders: { $sum: 1 },
       },

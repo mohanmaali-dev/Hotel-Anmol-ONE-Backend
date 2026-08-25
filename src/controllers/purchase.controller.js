@@ -6,6 +6,8 @@ import { Purchase } from '../models/purchase.model.js';
 import { StockItem } from '../models/stock-item.model.js';
 import { Supplier } from '../models/supplier.model.js';
 import { sendSuccess } from '../utils/api-response.js';
+import { buildDateFilter } from '../utils/date-range.js';
+import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
 import { calculatePayment } from '../utils/payment-calculations.js';
 import { calculatePurchaseTotals } from '../utils/purchase-calculations.js';
 import { applyStockMovement, rollbackAppliedMovement } from '../utils/stock-movement.js';
@@ -32,13 +34,6 @@ const getPagination = (query) => {
   return { page, limit };
 };
 
-const buildDateFilter = (fromDate, toDate) => {
-  const date = {};
-  if (fromDate) date.$gte = new Date(`${fromDate}T00:00:00.000Z`);
-  if (toDate) date.$lte = new Date(`${toDate}T23:59:59.999Z`);
-  return Object.keys(date).length ? date : undefined;
-};
-
 const findPurchase = async (id) => {
   const query = mongoose.isValidObjectId(id)
     ? { _id: id }
@@ -48,12 +43,28 @@ const findPurchase = async (id) => {
   return purchase;
 };
 
-const findSupplier = async (supplierId) => {
+const findSupplier = async (supplierId, allowInactive = false) => {
   if (!supplierId) throw createError('Supplier is required', 400);
   if (!mongoose.isValidObjectId(supplierId)) throw createError('Invalid supplier ID', 400);
   const supplier = await Supplier.findById(supplierId);
   if (!supplier) throw createError('Supplier not found', 404);
+  if (!allowInactive && supplier.status !== 'Active') {
+    throw createError('Please select an active supplier', 400);
+  }
   return supplier;
+};
+
+const savePurchaseSafely = async (purchase, conditions = {}) => {
+  purchase.$where = { updatedAt: purchase.updatedAt, ...conditions };
+  try {
+    await purchase.save();
+  } catch (error) {
+    if (error.name === 'DocumentNotFoundError') {
+      throw createError('Purchase changed while it was being updated. Please try again', 409);
+    }
+    throw error;
+  }
+  return purchase;
 };
 
 const getValidatedPurchaseItems = async (items) => {
@@ -250,7 +261,10 @@ export const updatePurchase = async (request, response) => {
 
   let supplier;
   if (request.body.supplierId !== undefined) {
-    supplier = await findSupplier(request.body.supplierId);
+    supplier = await findSupplier(
+      request.body.supplierId,
+      String(request.body.supplierId) === String(purchase.supplierId),
+    );
   }
   const validatedItems = request.body.items
     ? await getValidatedPurchaseItems(request.body.items)
@@ -276,7 +290,11 @@ export const updatePurchase = async (request, response) => {
   }
   if (request.body.notes !== undefined) purchase.notes = request.body.notes;
   purchase.set({ ...totals, ...payment });
-  await purchase.save();
+  await savePurchaseSafely(purchase, {
+    purchaseStatus: purchase.purchaseStatus,
+    stockUpdated: { $ne: true },
+    stockProcessing: { $ne: true },
+  });
 
   return sendSuccess(response, {
     message: 'Purchase updated successfully',
@@ -313,6 +331,10 @@ export const updatePurchaseStatus = async (request, response) => {
     );
   }
 
+  if (nextStatus === 'Cancelled' && (purchase.paymentRecorded || purchase.paidAmount > 0)) {
+    throw createError('A paid purchase cannot be cancelled without a payment reversal', 400);
+  }
+
   if (nextStatus === 'Received') {
     const receivedPurchase = await receivePurchaseIntoStock(purchase, request.userId);
     return sendSuccess(response, {
@@ -321,6 +343,7 @@ export const updatePurchaseStatus = async (request, response) => {
     });
   }
 
+  const previousStatus = purchase.purchaseStatus;
   purchase.purchaseStatus = nextStatus;
   if (nextStatus === 'Ordered') purchase.orderedAt = new Date();
   if (nextStatus === 'Cancelled') {
@@ -328,7 +351,11 @@ export const updatePurchaseStatus = async (request, response) => {
     purchase.stockUpdatePending = false;
     purchase.stockProcessing = false;
   }
-  await purchase.save();
+  await savePurchaseSafely(purchase, {
+    purchaseStatus: previousStatus,
+    stockUpdated: { $ne: true },
+    stockProcessing: { $ne: true },
+  });
 
   return sendSuccess(response, {
     message: `Purchase marked as ${nextStatus}`,
@@ -350,8 +377,12 @@ export const updatePurchasePayment = async (request, response) => {
     request.body.paidAmount,
     request.body.paymentType || purchase.paymentType,
   );
+  if (purchase.paidAmount > 0 || payment.paidAmount > 0) purchase.paymentRecorded = true;
   purchase.set(payment);
-  await purchase.save();
+  await savePurchaseSafely(purchase, {
+    purchaseStatus: { $ne: 'Cancelled' },
+    stockProcessing: { $ne: true },
+  });
 
   return sendSuccess(response, {
     message: 'Purchase payment updated successfully',
@@ -361,9 +392,7 @@ export const updatePurchasePayment = async (request, response) => {
 
 export const deletePurchase = async (request, response) => {
   const purchase = await findPurchase(request.params.id);
-  if (!['Draft', 'Cancelled'].includes(purchase.purchaseStatus)) {
-    throw createError('Only draft or cancelled purchases can be deleted', 400);
-  }
+  await assertNoDeletionDependencies('purchase', purchase._id);
   await purchase.deleteOne();
   return sendSuccess(response, { message: 'Purchase deleted successfully', data: purchase });
 };

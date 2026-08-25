@@ -132,6 +132,10 @@ const purchaseSchema = new mongoose.Schema(
       enum: ['Paid', 'Partial', 'Not Paid'],
       default: 'Not Paid',
     },
+    paymentRecorded: {
+      type: Boolean,
+      default: false,
+    },
     purchaseStatus: {
       type: String,
       enum: ['Draft', 'Ordered', 'Received', 'Cancelled'],
@@ -177,6 +181,7 @@ purchaseSchema.pre('validate', function calculatePaymentFields() {
   if (this.paidAmount <= 0) this.paymentStatus = 'Not Paid';
   else if (this.paidAmount < this.finalAmount) this.paymentStatus = 'Partial';
   else this.paymentStatus = 'Paid';
+  if (this.paidAmount > 0) this.paymentRecorded = true;
 });
 
 export const Purchase = mongoose.model('Purchase', purchaseSchema);

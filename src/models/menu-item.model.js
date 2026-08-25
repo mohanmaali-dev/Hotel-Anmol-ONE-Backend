@@ -45,6 +45,12 @@ const menuItemSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    servingSize: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+      default: '',
+    },
     description: {
       type: String,
       trim: true,

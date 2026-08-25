@@ -1,3 +1,5 @@
+import { roundMoney } from './money.js';
+
 const createValidationError = (message) => {
   const error = new Error(message);
   error.statusCode = 400;
@@ -9,7 +11,7 @@ const toNonNegativeNumber = (value, fieldName) => {
   if (!Number.isFinite(number) || number < 0) {
     throw createValidationError(`${fieldName} cannot be negative`);
   }
-  return number;
+  return roundMoney(number);
 };
 
 export const calculatePurchaseTotals = (items, discountValue = 0, additionalChargesValue = 0) => {
@@ -17,9 +19,14 @@ export const calculatePurchaseTotals = (items, discountValue = 0, additionalChar
     throw createValidationError('At least one purchase item is required');
   }
 
+  const stockItemIds = items.map((item) => String(item.stockItemId || ''));
+  if (new Set(stockItemIds).size !== stockItemIds.length) {
+    throw createValidationError('The same stock item cannot be added more than once');
+  }
+
   const normalizedItems = items.map((item, index) => {
     const quantity = Number(item.quantity);
-    const purchasePrice = Number(item.purchasePrice);
+    const purchasePrice = roundMoney(item.purchasePrice);
 
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw createValidationError(`Item ${index + 1}: quantity must be greater than 0`);
@@ -43,14 +50,16 @@ export const calculatePurchaseTotals = (items, discountValue = 0, additionalChar
       quantity,
       unit: item.unit.trim(),
       purchasePrice,
-      amount: quantity * purchasePrice,
+      amount: roundMoney(quantity * purchasePrice),
     };
   });
 
   const discount = toNonNegativeNumber(discountValue, 'Discount');
   const additionalCharges = toNonNegativeNumber(additionalChargesValue, 'Additional charges');
-  const subtotal = normalizedItems.reduce((total, item) => total + item.amount, 0);
-  const finalAmount = subtotal - discount + additionalCharges;
+  const subtotal = roundMoney(
+    normalizedItems.reduce((total, item) => total + item.amount, 0),
+  );
+  const finalAmount = roundMoney(subtotal - discount + additionalCharges);
 
   if (finalAmount < 0) {
     throw createValidationError('Final amount cannot be negative');

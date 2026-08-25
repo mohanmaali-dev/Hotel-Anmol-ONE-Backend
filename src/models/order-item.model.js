@@ -1,5 +1,15 @@
 import mongoose from 'mongoose';
 
+const orderIngredientSchema = new mongoose.Schema(
+  {
+    stockItemId: { type: mongoose.Schema.Types.ObjectId, ref: 'StockItem', required: true },
+    stockItemName: { type: String, required: true, trim: true },
+    quantityUsed: { type: Number, required: true, min: 0.001 },
+    unit: { type: String, required: true, trim: true },
+  },
+  { _id: false },
+);
+
 const orderItemSchema = new mongoose.Schema(
   {
     menuItemId: {
@@ -26,6 +36,24 @@ const orderItemSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 0,
+    },
+    servingSize: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+      default: '',
+    },
+    recipeCaptured: {
+      type: Boolean,
+      default: false,
+    },
+    trackStock: {
+      type: Boolean,
+      default: false,
+    },
+    ingredients: {
+      type: [orderIngredientSchema],
+      default: [],
     },
   },
   { timestamps: false, versionKey: false },
