@@ -2,11 +2,17 @@ import mongoose from 'mongoose';
 
 import { env } from '../config/env.js';
 
-const transactionsUnsupported = (error) =>
+export const isTransactionUnsupportedError = (error) =>
   error?.code === 20 ||
-  /transaction numbers are only allowed|transactions are not supported/i.test(error?.message || '');
+  /transaction numbers are only allowed|transactions are not supported|does not support retryable writes/i.test(
+    error?.message || '',
+  );
 
-export const runInTransaction = async (work, fallback) => {
+export const runInTransaction = async (
+  work,
+  fallback,
+  { allowProductionFallback = false } = {},
+) => {
   const session = await mongoose.startSession();
   try {
     let result;
@@ -15,10 +21,14 @@ export const runInTransaction = async (work, fallback) => {
     });
     return result;
   } catch (error) {
-    if (transactionsUnsupported(error) && env.nodeEnv !== 'production' && fallback) {
+    if (
+      isTransactionUnsupportedError(error) &&
+      fallback &&
+      (env.nodeEnv !== 'production' || allowProductionFallback)
+    ) {
       return fallback();
     }
-    if (transactionsUnsupported(error)) {
+    if (isTransactionUnsupportedError(error)) {
       const configurationError = new Error(
         'Database transactions are required for safe stock updates. Use a MongoDB replica set or Atlas cluster.',
       );

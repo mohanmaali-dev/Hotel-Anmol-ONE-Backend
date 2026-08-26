@@ -293,11 +293,12 @@ const run = async () => {
     },
     token,
   );
-  const [expenseReport, purchaseReport, stockReport, salesReport] = await Promise.all([
+  const [expenseReport, purchaseReport, stockReport, salesReport, dashboard] = await Promise.all([
     request('/reports/expenses', { token }),
     request('/reports/purchases', { token }),
     request('/reports/stock', { token }),
     request('/reports/sales', { token }),
+    request('/dashboard', { token }),
   ]);
   assert.equal(expenseReport.summary.totalExpenses, 250);
   assert.equal(purchaseReport.summary.totalPurchaseAmount, 1185);
@@ -310,6 +311,11 @@ const run = async () => {
     ],
   );
   assert.equal(salesReport.summary.totalSales, 395);
+  assert.equal(dashboard.data.sales.totalSales, 395);
+  assert.equal(dashboard.data.orders.todayOrders, 2);
+  assert.equal(dashboard.data.purchases.totalPurchaseAmount, 1185);
+  assert.equal(dashboard.data.stock.totalStockItems, 3);
+  assert.equal(dashboard.data.access.sales, true);
   const pagedOrderReport = await request('/reports/orders?page=1&limit=1', { token });
   assert.equal(pagedOrderReport.data.length, 1);
   assert.equal(pagedOrderReport.pagination.total, 2);

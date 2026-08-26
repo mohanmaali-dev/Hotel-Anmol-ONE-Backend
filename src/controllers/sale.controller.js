@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 
+import { Bill } from '../models/bill.model.js';
+import { Order } from '../models/order.model.js';
 import { Sale } from '../models/sale.model.js';
 import { sendSuccess } from '../utils/api-response.js';
 import { buildDateFilter, getCurrentDayRange } from '../utils/date-range.js';
@@ -62,7 +64,22 @@ export const getSale = async (request, response) => {
     : { saleNo: request.params.id.trim().toUpperCase() };
   const sale = await Sale.findOne(query).populate('biller', 'name username');
   if (!sale) throw createError('Sale not found', 404);
-  return sendSuccess(response, { message: 'Sale fetched successfully', data: sale });
+  const [bill, order] = await Promise.all([
+    Bill.findById(sale.billId).select('items subtotal discount additionalCharges').lean(),
+    Order.findById(sale.orderId).select('items areaType areaRoomNo').lean(),
+  ]);
+  return sendSuccess(response, {
+    message: 'Sale fetched successfully',
+    data: {
+      ...sale.toObject(),
+      items: bill?.items || order?.items || [],
+      areaType: order?.areaType,
+      areaRoomNo: order?.areaRoomNo,
+      subtotal: bill?.subtotal,
+      discount: bill?.discount,
+      additionalCharges: bill?.additionalCharges,
+    },
+  });
 };
 
 export const getSalesSummary = async (_request, response) => {

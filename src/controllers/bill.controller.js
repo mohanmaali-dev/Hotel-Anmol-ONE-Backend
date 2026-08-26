@@ -109,7 +109,11 @@ const syncBillRelations = (bill, order) => {
       { session, runValidators: true },
     );
   };
-  return runInTransaction(updateRelations, () => updateRelations());
+  return runInTransaction(updateRelations, () => updateRelations(), {
+    // These upserts are idempotent, so Mongo-compatible providers without
+    // transaction support can safely repeat them outside a transaction.
+    allowProductionFallback: true,
+  });
 };
 
 export const getBills = async (request, response) => {
@@ -227,7 +231,9 @@ export const updateBillPayment = async (request, response) => {
 
   const update = (session) =>
     executeBillPaymentUpdate(request.params.id, request.body, request.userId, session);
-  const bill = await runInTransaction(update, () => update());
+  const bill = await runInTransaction(update, () => update(), {
+    allowProductionFallback: true,
+  });
 
   return sendSuccess(response, {
     message: 'Bill payment updated successfully',
