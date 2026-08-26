@@ -26,6 +26,8 @@ Do not commit `.env.production` or `.env.development`. Both files are already ig
 
 Create a production MongoDB database and database user. Copy its connection string.
 
+Use MongoDB Atlas or another MongoDB replica-set deployment that supports transactions. Billing payment sync, received purchases, and completed-order stock deduction update related records together and intentionally stop if production transactions are unavailable. A standalone MongoDB server or a partially compatible MongoDB service is not suitable for these flows.
+
 It will look similar to:
 
 ```env
@@ -34,6 +36,8 @@ MONGODB_RETRY_WRITES=false
 ```
 
 Replace the username, password, cluster address, and database name with the real values. Allow network access only from the backend hosting environment when possible.
+
+`MONGODB_RETRY_WRITES=false` is safe for providers that do not support retryable writes, but it does not add transaction support. Confirm transaction support separately with the database provider before going live.
 
 ## 2. Configure the backend
 
@@ -66,16 +70,16 @@ ADMIN_PASSWORD=your-strong-admin-password
 
 Change these important values:
 
-| Variable             | What to enter                                              |
-| -------------------- | ---------------------------------------------------------- |
-| `MONGODB_URI`        | Real production MongoDB connection string                  |
+| Variable               | What to enter                                              |
+| ---------------------- | ---------------------------------------------------------- |
+| `MONGODB_URI`          | Real production MongoDB connection string                  |
 | `MONGODB_RETRY_WRITES` | Use `false` for MongoDB providers without retryable writes |
-| `FRONTEND_URL`       | Exact deployed frontend address, without `/api`            |
-| `JWT_SECRET`         | Unique private random value of at least 32 characters      |
-| `JWT_REFRESH_SECRET` | A different private random value of at least 32 characters |
-| `ADMIN_EMAIL`        | Restaurant owner's login email                             |
-| `ADMIN_PHONE`        | A 7 to 15 digit phone number                               |
-| `ADMIN_PASSWORD`     | A strong password used only for the first Admin            |
+| `FRONTEND_URL`         | Exact deployed frontend address, without `/api`            |
+| `JWT_SECRET`           | Unique private random value of at least 32 characters      |
+| `JWT_REFRESH_SECRET`   | A different private random value of at least 32 characters |
+| `ADMIN_EMAIL`          | Restaurant owner's login email                             |
+| `ADMIN_PHONE`          | A 7 to 15 digit phone number                               |
+| `ADMIN_PASSWORD`       | A strong password used only for the first Admin            |
 
 Keep `TRUST_PROXY=1` on Vercel or a normal single-proxy host so request limits use the visitor's real IP address. Email variables are optional while `EMAIL_ENABLED=false`; the complete example is in `.env.example`.
 

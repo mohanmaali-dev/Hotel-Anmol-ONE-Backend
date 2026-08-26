@@ -21,6 +21,13 @@ export const calculateOrderTotals = (items, discountValue = 0, additionalCharges
     throw createValidationError('At least one order item is required');
   }
 
+  const menuItemIds = items.map((item) => String(item.menuItemId || ''));
+  if (new Set(menuItemIds).size !== menuItemIds.length) {
+    throw createValidationError(
+      'The same menu item cannot be added more than once. Update its quantity instead',
+    );
+  }
+
   const normalizedItems = items.map((item, index) => {
     const quantity = Number(item.quantity);
     const rate = roundMoney(item.rate);

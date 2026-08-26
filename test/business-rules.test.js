@@ -14,6 +14,7 @@ import { getStockStatus, toPositiveQuantity } from '../src/utils/stock-calculati
 import { convertIngredientToStockUnit } from '../src/utils/unit-conversion.js';
 
 const objectId = '507f1f77bcf86cd799439011';
+const secondObjectId = '507f1f77bcf86cd799439012';
 
 test('MongoDB retry writes setting overrides the connection string', () => {
   assert.equal(
@@ -30,7 +31,7 @@ test('order totals are calculated from quantity and rate', () => {
   const totals = calculateOrderTotals(
     [
       { menuItemId: objectId, itemName: 'Burger', quantity: 2, rate: 150 },
-      { menuItemId: objectId, itemName: 'Tea', quantity: 1, rate: 40 },
+      { menuItemId: secondObjectId, itemName: 'Tea', quantity: 1, rate: 40 },
     ],
     20,
     10,
@@ -52,6 +53,17 @@ test('order total rejects a negative final amount', () => {
         0,
       ),
     /Final amount cannot be negative/,
+  );
+});
+
+test('an order cannot contain the same menu item twice', () => {
+  assert.throws(
+    () =>
+      calculateOrderTotals([
+        { menuItemId: objectId, itemName: 'Burger', quantity: 1, rate: 150 },
+        { menuItemId: objectId, itemName: 'Burger', quantity: 2, rate: 150 },
+      ]),
+    /cannot be added more than once/,
   );
 });
 

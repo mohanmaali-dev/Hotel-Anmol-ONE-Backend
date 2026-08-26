@@ -173,6 +173,23 @@ const run = async () => {
     )
   ).data;
 
+  await post(
+    '/orders',
+    {
+      orderType: 'Dine In',
+      areaType: 'Indoor',
+      areaRoomNo: 'T-DUPLICATE',
+      customerName: 'Duplicate Item Check',
+      paymentStatus: 'Not Paid',
+      items: [
+        { menuItemId: menuItem._id, quantity: 1 },
+        { menuItemId: menuItem._id, quantity: 2 },
+      ],
+    },
+    token,
+    400,
+  );
+
   const order = (
     await post(
       '/orders',
