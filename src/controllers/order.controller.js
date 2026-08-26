@@ -11,6 +11,7 @@ import { buildDateFilter } from '../utils/date-range.js';
 import { assertNoDeletionDependencies } from '../utils/deletion-dependencies.js';
 import { calculateOrderTotals } from '../utils/order-calculations.js';
 import { completeOrderWithStock } from '../utils/order-stock.js';
+import { hasPermission } from '../utils/permissions.js';
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -122,10 +123,23 @@ export const getOrders = async (request, response) => {
       .lean(),
     Order.countDocuments(filters),
   ]);
+  const canViewBilling = hasPermission(request.user, 'billing', 'view');
+  const bills = canViewBilling
+    ? await Bill.find({ orderId: { $in: orders.map((order) => order._id) } })
+        .select('_id billNo orderId')
+        .lean()
+    : [];
+  const billByOrderId = new Map(bills.map((bill) => [String(bill.orderId), bill]));
+  const data = canViewBilling
+    ? orders.map((order) => ({
+        ...order,
+        bill: billByOrderId.get(String(order._id)) || null,
+      }))
+    : orders;
 
   return sendSuccess(response, {
     message: 'Orders fetched successfully',
-    data: orders,
+    data,
     pagination: {
       page,
       limit,

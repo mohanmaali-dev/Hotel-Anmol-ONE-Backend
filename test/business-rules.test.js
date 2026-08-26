@@ -11,6 +11,7 @@ import { calculateOrderTotals } from '../src/utils/order-calculations.js';
 import { calculatePayment } from '../src/utils/payment-calculations.js';
 import { calculatePurchaseTotals } from '../src/utils/purchase-calculations.js';
 import { getStockStatus, toPositiveQuantity } from '../src/utils/stock-calculations.js';
+import { isTransactionUnsupportedError } from '../src/utils/transaction.js';
 import { convertIngredientToStockUnit } from '../src/utils/unit-conversion.js';
 
 const objectId = '507f1f77bcf86cd799439011';
@@ -24,6 +25,17 @@ test('MongoDB retry writes setting overrides the connection string', () => {
   assert.equal(
     applyRetryWritesSetting('mongodb://server/restaurant', false),
     'mongodb://server/restaurant?retryWrites=false',
+  );
+});
+
+test('Mongo-compatible retryable-write errors are recognized as unsupported transactions', () => {
+  assert.equal(
+    isTransactionUnsupportedError(
+      new Error(
+        'This MongoDB deployment does not support retryable writes. Please add retryWrites=false to your connection string.',
+      ),
+    ),
+    true,
   );
 });
 
